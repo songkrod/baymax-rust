@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use log::{error, info, warn};
+use tokio::time::{sleep, Duration};
 
 use crate::reasoner::llm_reasoner::LLMReasoner;
 use crate::reasoner::reasoning_result::ReasoningResult;
@@ -29,7 +30,6 @@ pub struct AiAgent {
 }
 
 impl AiAgent {
-    /// สร้าง Agent พร้อม backend ทั้งหมด
     pub fn new(name: &str) -> Self {
         info!("🤖 Initializing AiAgent with name: {}", name);
 
@@ -50,7 +50,6 @@ impl AiAgent {
         }
     }
 
-    /// พูดข้อความออกเสียง
     pub async fn say(&self, msg: &str) {
         info!("🎙️ {} กำลังพูด: {}", self.name, msg);
         if let Err(e) = self.tts.speak(msg).await {
@@ -59,13 +58,10 @@ impl AiAgent {
         }
     }
 
-    /// พูด fallback เมื่อไม่เข้าใจคำสั่ง
-    pub async fn fallback(&self) {
-        warn!("🤔 {} ไม่เข้าใจคำสั่งที่ได้รับ", self.name);
-        self.say("ขออภัยครับ ผมยังไม่เข้าใจคำสั่งนั้น").await;
+    pub fn is_speaking(&self) -> bool {
+        self.tts.is_speaking()
     }
 
-    /// เรียกใช้ skill ตามชื่อ (เช่น "say", "rest")
     pub async fn do_skill(&self, name: &str, args: Option<&str>) {
         info!("🛠️ เรียกใช้ skill: '{}' args: {:?}", name, args);
         match name {
@@ -87,14 +83,16 @@ impl AiAgent {
         }
     }
 
-    /// เพิ่ม skill ใหม่ให้เรียกใช้ได้ภายหลัง
     pub fn learn_skill(&mut self, name: &str, function: SkillFn) {
         info!("🧠 {} เรียนรู้ skill ใหม่: '{}'", self.name, name);
         self.skills.insert(name.to_string(), function);
     }
 
-    /// ฟังผู้ใช้ → VAD → Trim → ASR → คืนข้อความที่พูด
     pub async fn listen(&self) -> Option<String> {
+        while self.tts.is_speaking() {
+            sleep(Duration::from_millis(300)).await;
+        }
+
         info!("🎤 [{}] เริ่มบันทึกเสียงผู้ใช้...", self.name);
 
         let result = self
@@ -105,7 +103,6 @@ impl AiAgent {
         match &result {
             Some(text) => {
                 info!("🧠 [{}] ผู้ใช้พูดว่า: {}", self.name, text);
-
                 if self.is_hallucination(text) {
                     warn!("🌀 ตรวจพบข้อความหลอน: {}", text);
                     return None;
@@ -119,25 +116,27 @@ impl AiAgent {
         result
     }
 
-    /// คิดคำตอบจากข้อความ
     pub async fn reason(&self, input: &str, context: Option<&str>) -> ReasoningResult {
         info!("🧠 [{}] กำลังคิดคำตอบจากข้อความ: {}", self.name, input);
         self.reasoner.analyze(&self.name, input, context).await
     }
 
-    /// ตอบกลับอย่างสุภาพเมื่อเกิดข้อผิดพลาด
     async fn say_error(&self, msg: &str) {
         error!("❌ {} error: {}", self.name, msg);
         let polite_msg = format!("ขออภัยครับ เกิดข้อผิดพลาด: {}", msg);
         let _ = self.tts.speak(&polite_msg).await;
     }
 
-    /// ตรวจว่าเป็นข้อความหลอน (hallucination) หรือไม่
     fn is_hallucination(&self, text: &str) -> bool {
         let result = is_hallucination(text);
         if result {
             warn!("🌀 ตรวจพบข้อความหลอน: {}", text);
         }
         result
+    }
+
+    pub async fn fallback(&self) {
+        warn!("🤔 {} ไม่เข้าใจคำสั่งที่ได้รับ", self.name);
+        self.say("ขออภัยครับ ผมยังไม่เข้าใจคำสั่งนั้น").await;
     }
 }

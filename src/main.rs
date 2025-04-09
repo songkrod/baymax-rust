@@ -18,6 +18,7 @@ use services::search::manager::VectorSearch;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() {
@@ -48,6 +49,11 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     loop {
         info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
 
+        if agent.is_speaking() {
+            sleep(Duration::from_millis(300)).await;
+            continue;
+        }
+
         if let Some(transcript) = agent.listen().await {
             if let Some(name) = is_called_by_name(&transcript) {
                 info!("👂 ถูกเรียกชื่อว่า: {}", name);
@@ -65,6 +71,11 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
 
 async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
     loop {
+        if agent.is_speaking() {
+            sleep(Duration::from_millis(300)).await;
+            continue;
+        }
+
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
 
         if let Some(transcript) = agent.listen().await {

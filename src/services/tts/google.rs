@@ -6,7 +6,6 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::Client;
 use rodio::{Decoder, OutputStream, Sink};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;

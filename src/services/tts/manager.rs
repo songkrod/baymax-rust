@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use log::{info, warn};
 use tokio::task;
+
 use super::interface::TTSService;
 use super::google::GoogleTTS;
 use super::espeak::ESpeakTTS;
 
 pub struct SmartTTS {
+    is_speaking: Arc<AtomicBool>,
     primary: Arc<dyn TTSService + Send + Sync>,
     fallback: Arc<dyn TTSService + Send + Sync>,
 }
@@ -30,20 +32,34 @@ impl SmartTTS {
         };
 
         let fallback: Arc<dyn TTSService + Send + Sync> = Arc::new(ESpeakTTS);
-        Self { primary, fallback }
+        Self {
+            is_speaking: Arc::new(AtomicBool::new(false)),
+            primary,
+            fallback,
+        }
     }
 
+    pub fn is_speaking(&self) -> bool {
+        self.is_speaking.load(Ordering::Relaxed)
+    }
+
+    /// พูดข้อความเต็มก้อน
     pub async fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        match self.primary.speak(text).await {
+        self.is_speaking.store(true, Ordering::Relaxed);
+
+        let result = match self.primary.speak(text).await {
             Ok(_) => Ok(()),
             Err(e) => {
                 warn!("⚠️ Primary TTS failed: {}. Falling back to local.", e);
                 self.fallback.speak(text).await
             }
-        }
+        };
+
+        self.is_speaking.store(false, Ordering::Relaxed);
+        result
     }
 
-    /// 🎧 พูดแบบสตรีม — ตัดเป็นคำหรือประโยคย่อย แล้วพูดทีละอัน
+    /// แยกเป็น chunk และพูดทีละก้อน (ยังไม่ปรับใช้ speaking flag ในที่นี้)
     pub async fn speak_streamed(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let chunks = Self::split_into_chunks(text);
 
@@ -55,18 +71,16 @@ impl SmartTTS {
             task::spawn(async move {
                 if let Err(e) = primary.speak(&chunk_clone).await {
                     warn!("⚠️ Streamed chunk failed: {}, fallback...", e);
-                    let _ = fallback.speak(&chunk_clone)
-                        .await
-                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e });
+                    let _ = fallback.speak(&chunk_clone).await;
                 }
             });
+
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
 
         Ok(())
     }
 
-    /// 🔤 แยกข้อความเป็นช่วง ๆ (เช่น ประโยคหรือวรรค)
     fn split_into_chunks(text: &str) -> Vec<String> {
         let mut chunks = vec![];
         let mut current = String::new();
