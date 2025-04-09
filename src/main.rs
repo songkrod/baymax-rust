@@ -12,8 +12,12 @@ use log::{info, warn};
 use agent::ai_agent::AiAgent;
 use perception::name::name_reasoner::is_called_by_name;
 use memory::memory_manager::MemoryManager;
+use memory::memory_queue::MemoryQueue;
 use memory::conversation_context::ConversationContext;
 use services::search::manager::VectorSearch;
+
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -21,48 +25,50 @@ async fn main() {
     init_logger(&config);
 
     let agent_name = get_agent_name();
-    info!("\u{1F44B} {} is booting up...", agent_name);
+    info!("👋 {} is booting up...", agent_name);
 
     let vector_search = VectorSearch::new();
-    let mut memory_manager = MemoryManager::new(vector_search);
+    let memory_manager = Arc::new(Mutex::new(MemoryManager::new(vector_search)));
+    let memory_queue = MemoryQueue::new(memory_manager.clone());
+
     let context = ConversationContext::new();
     context.load_from_file();
 
     let agent = AiAgent::new(&agent_name);
 
     loop {
-        wait_for_wake_word(&agent, &mut memory_manager).await;
-        wait_for_command(&agent, &mut memory_manager, &context).await;
+        wait_for_wake_word(&agent, &memory_queue).await;
+        wait_for_command(&agent, &memory_queue, &context).await;
     }
 }
 
-async fn wait_for_wake_word(agent: &AiAgent, memory_manager: &mut MemoryManager) {
+async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     agent.say("สวัสดีครับ สามารถเรียกผมได้เลยครับ").await;
 
     loop {
-        info!("\u{1F634} [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
+        info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
 
         if let Some(transcript) = agent.listen().await {
             if let Some(name) = is_called_by_name(&transcript) {
-                info!("\u{1F442} ถูกเรียกชื่อว่า: {}", name);
-                memory_manager.add_memory("wake_phrase", &transcript).await;
+                info!("👂 ถูกเรียกชื่อว่า: {}", name);
+                memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
                 agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
                 break;
             } else {
-                info!("\u{1F6CC} ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
+                info!("🛌 ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
             }
         } else {
-            warn!("\u{1F4ED} ไม่ได้ยินอะไรเลย");
+            warn!("📭 ไม่ได้ยินอะไรเลย");
         }
     }
 }
 
-async fn wait_for_command(agent: &AiAgent, memory_manager: &mut MemoryManager, context: &ConversationContext) {
+async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
     loop {
-        info!("\u{1F7E2} [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
+        info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
 
         if let Some(transcript) = agent.listen().await {
-            memory_manager.add_memory("last_query", &transcript).await;
+            memory_queue.enqueue("last_query", &transcript.clone()).await;
 
             if transcript.contains("นอน") || transcript.contains("พักก่อน") {
                 agent.say("งั้นผมขอพักก่อนนะครับ").await;
@@ -72,24 +78,25 @@ async fn wait_for_command(agent: &AiAgent, memory_manager: &mut MemoryManager, c
             let prompt_context = context.get_context_prompt();
             let result = agent.reason(&transcript, Some(&prompt_context)).await;
 
-            // พูดตอบหลัก
             agent.say(&result.reply).await;
 
-            // ถ้ามี follow-up → พูดต่อ
             if let Some(follow_up) = &result.follow_up {
                 if !follow_up.trim().is_empty() {
                     agent.say(follow_up).await;
                 }
             }
 
-            // อัปเดตบริบทและเซฟไว้
             context.append(&transcript, &result.reply);
             context.trim_oldest(20);
             context.save_to_file();
 
-            memory_manager.save_memory("last_intent", &result.intent);
+            let intent = result.intent.clone();
+            let memory_queue_clone = memory_queue.clone();
+            tokio::spawn(async move {
+                memory_queue_clone.enqueue("last_intent", &intent).await;
+            });
         } else {
-            warn!("\u{1F4ED} ไม่ได้ยินอะไรเลย");
+            warn!("📭 ไม่ได้ยินอะไรเลย");
         }
     }
 }
