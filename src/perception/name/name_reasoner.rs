@@ -1,12 +1,11 @@
 use std::fs;
 use std::path::Path;
-use std::env;
 use serde::{Deserialize, Serialize};
 use log::{info, warn};
 
 use crate::perception::name::name_utils::{normalize, find_best_match};
 
-const MEMORY_PATH: &str = env::var("name_memory_path").unwrap_or_else(|_| "src/data/memory/name_memory.json".to_string());
+const MEMORY_PATH: &str = "src/data/memory/name_memory.json";
 const MATCH_THRESHOLD: f64 = 0.88;
 
 #[derive(Debug, Serialize, Deserialize)]
