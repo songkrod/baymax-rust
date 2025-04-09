@@ -1,5 +1,5 @@
 pub mod interface;
-pub mod google;
-pub mod local;
+pub mod espeak;
 pub mod manager;
-pub mod google_custom;
+pub mod google;
+pub mod streamer;

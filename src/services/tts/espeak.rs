@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use std::process::Command;
 use std::error::Error;
 
-pub struct LocalTTS;
+pub struct ESpeakTTS;
 
 #[async_trait]
-impl TTSService for LocalTTS {
-    async fn speak(&self, text: &str) -> Result<(), Box<dyn Error>> {
+impl TTSService for ESpeakTTS {
+    async fn speak(&self, text: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         let output = Command::new("espeak")
             .arg("-v")
             .arg("th")
@@ -15,7 +15,7 @@ impl TTSService for LocalTTS {
             .output()?;
 
         if !output.status.success() {
-            Err(format!("espeak failed: {:?}", output.stderr))?;
+            return Err(format!("espeak failed: {:?}", output.stderr).into());
         }
 
         Ok(())
