@@ -10,7 +10,6 @@ use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
 use crate::services::tts::manager::SmartTTS;
-use crate::utils::vad::record_and_trim;
 use crate::utils::hallucination::is_hallucination;
 
 /// Async Skill ฟังก์ชันที่สามารถเรียกได้ภายหลัง เช่น "say", "rest"

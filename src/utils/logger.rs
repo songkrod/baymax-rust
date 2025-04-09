@@ -1,5 +1,4 @@
 use flexi_logger::{Logger, Cleanup, Criterion, Naming, Duplicate, FileSpec, Record, DeferredNow};
-use log::LevelFilter;
 use crate::utils::config::Config;
 use std::io::Write;
 use std::convert::TryInto;

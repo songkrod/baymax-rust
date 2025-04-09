@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 use lazy_static::lazy_static;
-use log::{info, warn};
+use log::warn;
 
 const CONTEXT_FILE: &str = "src/data/memory/context_cache.json";
 

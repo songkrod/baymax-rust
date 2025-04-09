@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 const INDEX_DIR: &str = "src/data/memory";
 
+#[derive(Clone)]
 pub struct VectorSearch {
     primary: Arc<dyn SearchService + Send + Sync>,
     fallback: Arc<dyn SearchService + Send + Sync>,

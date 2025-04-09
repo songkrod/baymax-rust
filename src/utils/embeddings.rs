@@ -1,5 +1,3 @@
-use std::error::Error;
-
 /// แปลงข้อความเป็นเวกเตอร์ (Embeddings) โดยใช้ LLM หรือโมเดลที่เหมาะสม
 pub fn embed_text(text: &str) -> Vec<f32> {
     // ตัวอย่างนี้ใช้เวกเตอร์จากโมเดล pre-trained เช่น OpenAI หรือจากการคำนวณแบบง่ายๆ

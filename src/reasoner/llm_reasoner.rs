@@ -1,9 +1,8 @@
 use crate::reasoner::template::build_reasoning_prompt;
 use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::services::llm::manager::SmartLLM;
-use crate::utils::{context, self_knowledge};
-use log::{info, warn, debug};
-
+use crate::utils::self_knowledge;
+use log::{info, warn};
 use std::sync::Arc;
 
 pub struct LLMReasoner {
