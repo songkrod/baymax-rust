@@ -1,0 +1,38 @@
+# ไฟล์ Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# ไฟล์ Rust build
+/target/
+**/*.rs.bk
+
+# ไฟล์ VS Code
+.vscode/
+*.code-workspace
+
+# ไฟล์ OS
+.DS_Store
+Thumbs.db
+
+# ไฟล์เสียงที่ใช้ cache
+src/data/caches/audio/*.wav
+
+# ไฟล์ log
+src/data/logs/
+
+# ไฟล์ที่ build หรือ generate ขณะรันระบบ
+*.log
+*.tmp
+*.bak
+
+# Token หรือ key ที่อาจใช้ระหว่าง dev
+.env
+*.env
+
+venv
+
+secrets
+
+src/data/memory/context_cache.json
+src/data/memory/index.ann

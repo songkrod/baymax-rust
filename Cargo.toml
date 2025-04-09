@@ -1,0 +1,49 @@
+[package]
+name = "baymax"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "stream", "multipart"] }
+
+# JSON (de)serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# สำหรับโหลด ENV / Secret keys
+dotenvy = "0.15"
+
+# Logging
+log = "0.4"
+flexi_logger = "0.27"
+chrono = "0.4"
+
+# สำหรับเสียง (เลือกใช้)
+rodio = "0.17"              # เล่นเสียง
+cpal = "0.15"               # เข้าถึง audio device
+hound = "3.5"               # จัดการไฟล์ wav
+
+# สำหรับจัดการ path / filesystem
+tokio-util = "0.7"
+anyhow = "1.0"
+uuid = { version = "1", features = ["v4"] }
+
+# สำหรับ fuzzy matching wake word (อนาคต)
+strsim = "0.10"
+
+base64 = "0.21"
+gcp_auth = "0.9"
+async-trait = "0.1.88"
+jsonwebtoken = "9.3.1"
+webrtc-vad = "0.4.0"
+num-traits = "0.2.19"
+annoy = "0.1.0"
+murmurhash3 = "0.0.5"
+lazy_static = "1.5.0"
+
+# Optional: สำหรับจัดการ async audio recording
+# symphonia = "0.5"         # หากต้องการ decode/encode media
