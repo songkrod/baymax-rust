@@ -3,6 +3,7 @@ use std::env;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    pub use_gpio: bool,
     pub log_level: String,
     pub log_dir: String,
     pub log_file_name: String,
@@ -29,6 +30,7 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_LOG_ROTATE_COUNT),
+            use_gpio: std::env::var("use_gpio").unwrap_or("false".to_string()) == "true"
         }
     }
 }

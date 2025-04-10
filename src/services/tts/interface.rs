@@ -13,4 +13,6 @@ pub trait TTSService: Send + Sync {
         }
         Ok(())
     }
+
+    async fn synthesize(&self, text: &str) -> Result<Vec<u8>, String>;
 }

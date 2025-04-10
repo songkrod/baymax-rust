@@ -13,6 +13,7 @@ Baymax เป็น AI ผู้ช่วยที่พูดได้ ฟั�
 ```bash
 sudo apt update
 sudo apt install -y \
+  lame \
   espeak \
   portaudio19-dev \
   libasound2-dev \

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use log::{debug, error, info, warn};
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 use crate::services::asr::manager::SmartASR;
@@ -31,6 +31,7 @@ pub struct AiAgent {
     pub llm: Arc<SmartLLM>,
     pub reasoner: Arc<LLMReasoner>,
     pub skills: HashMap<String, SkillFn>,
+    is_speaking_flag: Arc<Mutex<bool>>,
 }
 
 impl AiAgent {
@@ -42,7 +43,7 @@ impl AiAgent {
 
         info!("🧠 Reasoner initialized");
         info!("🔡 TTS engine ready");
-        info!("🧯 ASR engine ready");
+        info!("🫯 ASR engine ready");
 
         Self {
             name: name.to_string(),
@@ -51,17 +52,31 @@ impl AiAgent {
             llm,
             reasoner,
             skills: HashMap::new(),
+            is_speaking_flag: Arc::new(Mutex::new(false)),
         }
     }
 
     pub async fn say(&self, msg: &str) {
+        {
+            let mut flag = self.is_speaking_flag.lock().await;
+            *flag = true;
+        }
+
         info!("🎙️ {} กำลังพูด: {}", self.name, msg);
-        self.tts.enqueue(msg);
-        sleep(Duration::from_millis(400)).await;
+        self.tts.enqueue_and_wait(msg).await;
+
+        while self.tts.is_speaking().await {
+            sleep(Duration::from_millis(100)).await;
+        }
+
+        {
+            let mut flag = self.is_speaking_flag.lock().await;
+            *flag = false;
+        }
     }
 
-    pub fn is_speaking(&self) -> bool {
-        self.tts.is_speaking()
+    pub async fn is_speaking(&self) -> bool {
+        *self.is_speaking_flag.lock().await
     }
 
     pub async fn do_skill(&self, name: &str, args: Option<&str>) {
@@ -91,7 +106,7 @@ impl AiAgent {
     }
 
     pub async fn listen(&self) -> Option<String> {
-        while self.tts.is_speaking() {
+        while self.is_speaking().await {
             sleep(Duration::from_millis(300)).await;
         }
 
@@ -123,18 +138,16 @@ impl AiAgent {
         self.reasoner.analyze(&self.name, input, context).await
     }
 
-    /// พูดแบบสตรีม — รับข้อความจาก GPT ทีละคำ ส่งเข้า TTS Queue และ return full reply
     pub async fn think_and_say_streaming(&self, input: &str) -> String {
-        use tokio::sync::Mutex;
-        use std::sync::Arc;
-
         let name = self.name.clone();
         let tts = Arc::clone(&self.tts);
         let full_reply = Arc::new(Mutex::new(String::new()));
+        let speaking_flag = Arc::clone(&self.is_speaking_flag);
 
-        let lock = Arc::new(Mutex::new(()));
-        let lock_clone = Arc::clone(&lock);
-        let _guard = lock.lock().await;
+        {
+            let mut flag = speaking_flag.lock().await;
+            *flag = true;
+        }
 
         info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
 
@@ -146,13 +159,11 @@ impl AiAgent {
             .stream_reply(input, {
                 let buffer = Arc::clone(&buffer);
                 let tts = Arc::clone(&tts);
-                let lock = Arc::clone(&lock_clone);
 
                 move |chunk| {
                     debug!("🧩 received chunk: '{}'", chunk);
                     let buffer = Arc::clone(&buffer);
                     let tts = Arc::clone(&tts);
-                    let lock = Arc::clone(&lock);
                     let reply_for_closure = Arc::clone(&reply_for_closure);
 
                     tokio::spawn(async move {
@@ -166,7 +177,6 @@ impl AiAgent {
                         *buf = rest;
 
                         for chunk in chunks {
-                            let _guard = lock.lock().await;
                             debug!("📤 ส่งเข้า TTS: {}", chunk);
                             tts.enqueue(&chunk);
                         }
@@ -179,6 +189,15 @@ impl AiAgent {
 
         if result.is_err() {
             self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
+        }
+
+        while self.tts.is_speaking().await {
+            sleep(Duration::from_millis(300)).await;
+        }
+
+        {
+            let mut flag = speaking_flag.lock().await;
+            *flag = false;
         }
 
         let reply = {

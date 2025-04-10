@@ -1,5 +1,3 @@
-// 📁 src/services/tts/manager.rs
-
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use log::{info, warn};
 use tokio::task;
@@ -11,8 +9,8 @@ use super::espeak::ESpeakTTS;
 
 pub struct SmartTTS {
     is_speaking: Arc<AtomicBool>,
-    primary: Arc<dyn TTSService + Send + Sync>,
-    fallback: Arc<dyn TTSService + Send + Sync>,
+    pub primary: Arc<dyn TTSService + Send + Sync>,
+    pub fallback: Arc<dyn TTSService + Send + Sync>,
 }
 
 impl SmartTTS {
@@ -46,7 +44,6 @@ impl SmartTTS {
         self.is_speaking.load(Ordering::Relaxed)
     }
 
-    /// พูดข้อความเต็มก้อน
     pub async fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.is_speaking.store(true, Ordering::Relaxed);
 
@@ -62,7 +59,16 @@ impl SmartTTS {
         result
     }
 
-    /// แยกเป็น chunk และพูดทีละก้อน (ยังไม่ปรับใช้ speaking flag ในที่นี้)
+    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, String> {
+        match self.primary.synthesize(text).await {
+            Ok(data) => Ok(data),
+            Err(e) => {
+                warn!("⚠️ Primary synthesize failed: {}. Falling back.", e);
+                self.fallback.synthesize(text).await
+            }
+        }
+    }
+
     pub async fn speak_streamed(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let chunks = Self::split_into_chunks(text);
 
@@ -109,5 +115,9 @@ impl SmartTTS {
 impl TTSService for SmartTTS {
     async fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.speak(text).await
+    }
+
+    async fn synthesize(&self, text: &str) -> Result<Vec<u8>, String> {
+        self.synthesize(text).await
     }
 }

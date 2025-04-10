@@ -29,8 +29,6 @@ struct Claims {
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
-    // expires_in: usize,
-    // token_type: String,
 }
 
 pub struct GoogleTTS;
@@ -38,11 +36,22 @@ pub struct GoogleTTS;
 #[async_trait]
 impl TTSService for GoogleTTS {
     async fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let key_path = std::env::var("google_application_credentials")?;
-        let key_str = fs::read_to_string(Path::new(&key_path))?;
-        let key: ServiceAccountKey = serde_json::from_str(&key_str)?;
+        let audio_data = self.synthesize(text).await?;
+        let cursor = Cursor::new(audio_data);
+        let (_stream, handle) = OutputStream::try_default()?;
+        let sink = Sink::try_new(&handle)?;
+        let source = Decoder::new(cursor)?;
+        sink.append(source);
+        sink.sleep_until_end();
+        Ok(())
+    }
 
-        // สร้าง JWT เพื่อขอ access token
+    async fn synthesize(&self, text: &str) -> Result<Vec<u8>, String> {
+        let key_path = std::env::var("google_application_credentials")
+            .map_err(|e| format!("env error: {}", e))?;
+        let key_str = fs::read_to_string(Path::new(&key_path)).map_err(|e| format!("read error: {}", e))?;
+        let key: ServiceAccountKey = serde_json::from_str(&key_str).map_err(|e| format!("json error: {}", e))?;
+
         let now = Utc::now();
         let claims = Claims {
             iss: key.client_email.clone(),
@@ -52,10 +61,11 @@ impl TTSService for GoogleTTS {
             exp: (now + Duration::minutes(60)).timestamp() as usize,
         };
 
-        let encoding_key = EncodingKey::from_rsa_pem(key.private_key.as_bytes())?;
-        let jwt = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)?;
+        let encoding_key = EncodingKey::from_rsa_pem(key.private_key.as_bytes())
+            .map_err(|e| format!("rsa error: {}", e))?;
+        let jwt = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+            .map_err(|e| format!("jwt error: {}", e))?;
 
-        // ขอ access token
         let client = Client::new();
         let res = client.post(&key.token_uri)
             .form(&[
@@ -63,12 +73,11 @@ impl TTSService for GoogleTTS {
                 ("assertion", &jwt),
             ])
             .send()
-            .await?;
+            .await.map_err(|e| format!("auth error: {}", e))?;
 
-        let token_data: TokenResponse = res.json().await?;
+        let token_data: TokenResponse = res.json().await.map_err(|e| format!("parse token error: {}", e))?;
         let bearer = format!("Bearer {}", token_data.access_token);
 
-        // เรียก TTS API
         let url = "https://texttospeech.googleapis.com/v1/text:synthesize";
         let request_body = serde_json::json!({
             "input": { "text": text },
@@ -85,19 +94,10 @@ impl TTSService for GoogleTTS {
             .header("Authorization", bearer)
             .json(&request_body)
             .send()
-            .await?;
+            .await.map_err(|e| format!("tts request error: {}", e))?;
 
-        let json = res.json::<serde_json::Value>().await?;
-        let audio_base64 = json["audioContent"].as_str().ok_or("Missing audio content")?;
-        let audio_data = general_purpose::STANDARD.decode(audio_base64)?;
-
-        let cursor = Cursor::new(audio_data);
-        let (_stream, handle) = OutputStream::try_default()?;
-        let sink = Sink::try_new(&handle)?;
-        let source = Decoder::new(cursor)?;
-        sink.append(source);
-        sink.sleep_until_end();
-
-        Ok(())
+        let json = res.json::<serde_json::Value>().await.map_err(|e| format!("tts response error: {}", e))?;
+        let audio_base64 = json["audioContent"].as_str().ok_or("missing audioContent")?;
+        general_purpose::STANDARD.decode(audio_base64).map_err(|e| format!("base64 decode error: {}", e))
     }
 }

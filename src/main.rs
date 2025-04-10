@@ -6,6 +6,7 @@ mod agent;
 mod perception;
 mod memory;
 mod reasoner;
+mod hardware;
 
 use utils::config::{Config, get_agent_name};
 use utils::logger::init_logger;
@@ -19,6 +20,8 @@ use memory::conversation_context::ConversationContext;
 use services::search::manager::VectorSearch;
 use services::tts::manager::SmartTTS;
 use services::tts::queue::TTSQueue;
+use hardware::speaker::controller::create_speaker_controller_from_env;
+use hardware::speaker::interface::SpeakerBackend;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -40,7 +43,8 @@ async fn main() {
     context.load_from_file();
 
     let smart_tts = Arc::new(SmartTTS::new());
-    let tts = Arc::new(TTSQueue::new(smart_tts.clone(), 3));
+    let speaker: Arc<dyn SpeakerBackend> = create_speaker_controller_from_env();
+    let tts = Arc::new(TTSQueue::new(smart_tts.clone(), speaker, 3));
     let agent = AiAgent::new(&agent_name, tts.clone());
 
     loop {
@@ -55,13 +59,9 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     loop {
         info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
 
-        while agent.is_speaking() {
-            sleep(Duration::from_millis(300)).await;
-        }
-
         if let Some(transcript) = agent.listen().await {
             if let Some(name) = is_called_by_name(&transcript) {
-                info!("👂 ถูกเรียกชื่อว่า: {}", name);
+                info!("🗢 ถูกเรียกชื่อว่า: {}", name);
                 memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
                 agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
                 break;
@@ -69,18 +69,18 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
                 info!("🛌 ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
             }
         } else {
-            warn!("📭 ไม่ได้ยินอะไรเลย");
+            warn!("👭 ไม่ได้ยินอะไรเลย");
         }
     }
 }
 
 async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
     loop {
-        while agent.is_speaking() {
+        // ✅ ถ้ายังพูดอยู่ → ข้ามรอบนี้ไปก่อนเลย
+        if agent.is_speaking().await {
+            info!("🗢 หุ่นกำลังพูดอยู่ — งดฟังใหม่รอบนี้");
             sleep(Duration::from_millis(300)).await;
+            continue;
         }
 
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
@@ -112,7 +112,7 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
                 });
             }
         } else {
-            warn!("📭 ไม่ได้ยินอะไรเลย");
+            warn!("👭 ไม่ได้ยินอะไรเลย");
         }
     }
 }
