@@ -26,7 +26,7 @@ pub fn find_cut_position(buffer: &str, min_len: usize) -> Option<usize> {
     None
 }
 
-/// แยก buffer เป็น chunk ละ N คำ (ใช้กับ GPT streaming)
+/// แยก buffer เป็น chunk ละ N คำ (ใช้กับ GPT streaming แบบมี space)
 pub fn split_to_word_chunks(text: &str, word_limit: usize) -> (Vec<String>, String) {
     let words: Vec<&str> = text.split_whitespace().collect();
     let mut chunks = Vec::new();
@@ -40,4 +40,25 @@ pub fn split_to_word_chunks(text: &str, word_limit: usize) -> (Vec<String>, Stri
 
     let leftover = words[i..].join(" ");
     (chunks, leftover)
+}
+
+/// ใช้กับภาษาไทย: แบ่งวรรคแบบฉลาดตามตัวจบวลีหรือประโยค เช่น "ครับ", "ค่ะ", "!"
+pub fn split_smart_thai_chunks(text: &str, min_len: usize) -> (Vec<String>, String) {
+    use log::debug;
+    let mut chunks = vec![];
+    let mut current = String::new();
+    debug!("🧠 chunker ได้รับข้อความ: '{}'", text);
+
+    for c in text.chars() {
+        current.push(c);
+
+        if current.len() >= min_len && matches!(c, ' ' | '.' | '?' | '!' | 'ๆ' | '\n') {
+            let chunk = current.trim().to_string();
+            debug!("🧠 ตัด chunk: '{}'", chunk);
+            chunks.push(chunk);
+            current.clear();
+        }
+    }
+
+    (chunks, current)
 }

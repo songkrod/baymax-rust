@@ -37,7 +37,7 @@ pub fn init_logger(config: &Config) {
     log::info!("✅ Logger initialized with config: {:?}", config);
 }
 
-/// รูปแบบ log: [2025-04-07 22:11:53] [INFO] ข้อความ...
+/// รูปแบบ log: [2025-04-07 22:11:53.123456] [INFO] [module::path] ข้อความ...
 fn custom_log_format(
     w: &mut dyn Write,
     now: &mut DeferredNow,
@@ -45,9 +45,10 @@ fn custom_log_format(
 ) -> std::io::Result<()> {
     write!(
         w,
-        "[{}] [{:5}] {}",
-        now.now().format("%Y-%m-%d %H:%M:%S"),
+        "[{}] [{:5}] [{}] {}",
+        now.now().format("%Y-%m-%d %H:%M:%S%.6f"),
         record.level(),
+        record.module_path().unwrap_or("unknown"),
         &record.args()
     )
 }

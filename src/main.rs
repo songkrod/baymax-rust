@@ -3,9 +3,9 @@
 mod utils;
 mod services;
 mod agent;
-mod reasoner;
 mod perception;
 mod memory;
+mod reasoner;
 
 use utils::config::{Config, get_agent_name};
 use utils::logger::init_logger;
@@ -97,29 +97,9 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             let insight = agent.reasoner.analyze_insight(&transcript).await;
             info!("🧠 insight: {:?}", insight);
 
-            // 💬 ตอบแบบสตรีมทันที + เก็บ full_reply
-            let full_reply = Arc::new(Mutex::new(String::new()));
-            let reply_for_closure = Arc::clone(&full_reply);
-            let tts = agent.tts.clone();
-
-            let result = agent
-                .llm
-                .stream_reply(&transcript, move |chunk| {
-                    let reply_for_closure = Arc::clone(&reply_for_closure);
-                    let tts = tts.clone();
-                    tokio::spawn(async move {
-                        reply_for_closure.lock().await.push_str(&chunk);
-                        tts.enqueue(&chunk);
-                    });
-                })
-                .await;
-
-            if let Err(_e) = result {
-                agent.say("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้").await;
-                continue;
-            }
-
-            let final_reply = full_reply.lock().await.clone();
+            // 💬 ตอบแบบสตรีมผ่าน ai_agent และรอผลเต็ม
+            let final_reply = agent.think_and_say_streaming(&transcript).await;
+            info!("💬 ตอบคำถาม: {}", final_reply);
             context.append(&transcript, &final_reply);
             context.trim_oldest(20);
             context.save_to_file();

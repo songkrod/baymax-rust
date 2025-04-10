@@ -9,13 +9,13 @@ use tokio::sync::Mutex;
 use log::{debug, error, info, warn};
 use tokio::time::{sleep, Duration};
 
-use crate::reasoner::llm_reasoner::LLMReasoner;
-use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
 use crate::services::tts::queue::TTSQueue;
 use crate::utils::hallucination::is_hallucination;
-use crate::utils::streaming::chunker::split_to_word_chunks; // ✅ ใช้ chunker ใหม่แบบ word-level
+use crate::utils::streaming::chunker::split_smart_thai_chunks;
+use crate::reasoner::llm_reasoner::LLMReasoner;
+use crate::reasoner::reasoning_result::ReasoningResult;
 
 /// Async Skill ฟังก์ชันที่สามารถเรียกได้ภายหลัง เช่น "say", "rest"
 type SkillFn = fn(Option<&str>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -123,13 +123,14 @@ impl AiAgent {
         self.reasoner.analyze(&self.name, input, context).await
     }
 
-    /// พูดแบบสตรีม — รับข้อความจาก GPT ทีละคำ ส่งเข้า TTS Queue
-    pub async fn think_and_say_streaming(&self, input: &str) {
+    /// พูดแบบสตรีม — รับข้อความจาก GPT ทีละคำ ส่งเข้า TTS Queue และ return full reply
+    pub async fn think_and_say_streaming(&self, input: &str) -> String {
         use tokio::sync::Mutex;
         use std::sync::Arc;
 
         let name = self.name.clone();
         let tts = Arc::clone(&self.tts);
+        let full_reply = Arc::new(Mutex::new(String::new()));
 
         let lock = Arc::new(Mutex::new(()));
         let lock_clone = Arc::clone(&lock);
@@ -138,6 +139,7 @@ impl AiAgent {
         info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
 
         let buffer = Arc::new(Mutex::new(String::new()));
+        let reply_for_closure = Arc::clone(&full_reply);
 
         let result = self
             .llm
@@ -151,13 +153,16 @@ impl AiAgent {
                     let buffer = Arc::clone(&buffer);
                     let tts = Arc::clone(&tts);
                     let lock = Arc::clone(&lock);
+                    let reply_for_closure = Arc::clone(&reply_for_closure);
 
                     tokio::spawn(async move {
+                        reply_for_closure.lock().await.push_str(&chunk);
+
                         let mut buf = buffer.lock().await;
                         buf.push_str(&chunk);
+                        debug!("🧠 current buffer: {}", buf);
 
-                        // ✅ ใช้ chunker แยกตามจำนวนคำจริง ไม่ใช่ character
-                        let (chunks, rest) = split_to_word_chunks(&buf, 3);
+                        let (chunks, rest) = split_smart_thai_chunks(&buf, 6);
                         *buf = rest;
 
                         for chunk in chunks {
@@ -170,9 +175,18 @@ impl AiAgent {
             })
             .await;
 
+        debug!("📛 LLM stream result = {:?}", result);
+
         if result.is_err() {
             self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
         }
+
+        let reply = {
+            let lock = full_reply.lock().await;
+            lock.clone()
+        };
+
+        reply
     }
 
     async fn say_error(&self, msg: &str) {
