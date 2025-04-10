@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::time::{sleep, Duration};
 
 use crate::reasoner::llm_reasoner::LLMReasoner;
@@ -15,6 +15,7 @@ use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
 use crate::services::tts::queue::TTSQueue;
 use crate::utils::hallucination::is_hallucination;
+use crate::perception::name::name_utils::naive_split_thai;
 
 /// Async Skill ฟังก์ชันที่สามารถเรียกได้ภายหลัง เช่น "say", "rest"
 type SkillFn = fn(Option<&str>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -56,6 +57,7 @@ impl AiAgent {
     pub async fn say(&self, msg: &str) {
         info!("🎙️ {} กำลังพูด: {}", self.name, msg);
         self.tts.enqueue(msg);
+        sleep(Duration::from_millis(400)).await; // ป้องกันพูดแล้วฟังตัวเอง
     }
 
     pub fn is_speaking(&self) -> bool {
@@ -123,27 +125,50 @@ impl AiAgent {
 
     /// พูดแบบสตรีม — รับข้อความจาก GPT ทีละคำ ส่งเข้า TTS Queue
     pub async fn think_and_say_streaming(&self, input: &str) {
+        use tokio::sync::Mutex;
+        use std::sync::Arc;
+
         let name = self.name.clone();
         let tts = Arc::clone(&self.tts);
 
-        // ล็อกไม่ให้พูดซ้อนกัน (กัน race condition)
         let lock = Arc::new(Mutex::new(()));
         let lock_clone = Arc::clone(&lock);
         let _guard = lock.lock().await;
 
         info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
 
+        let buffer = Arc::new(Mutex::new(String::new()));
+
         let result = self
             .llm
-            .stream_reply(input, move |chunk| {
+            .stream_reply(input, {
+                let buffer = Arc::clone(&buffer);
                 let tts = Arc::clone(&tts);
                 let lock = Arc::clone(&lock_clone);
 
-                // ส่ง chunk เข้า queue อย่างปลอดภัย
-                tokio::spawn(async move {
-                    let _guard = lock.lock().await;
-                    tts.enqueue(&chunk);
-                });
+                move |chunk| {
+                    debug!("🧩 received chunk: '{}'", chunk);
+                    let buffer = Arc::clone(&buffer);
+                    let tts = Arc::clone(&tts);
+                    let lock = Arc::clone(&lock);
+
+                    tokio::spawn(async move {
+                        let mut buf = buffer.lock().await;
+                        buf.push_str(&chunk);
+
+                        let text = buf.trim();
+                        let ready = text.ends_with(['.', '?', '!']) || text.chars().count() >= 10;
+
+                        if ready {
+                            let to_speak = text.to_string();
+                            buf.clear();
+                            if to_speak.trim().len() >= 3 {
+                                let _guard = lock.lock().await;
+                                tts.enqueue(&to_speak);
+                            }
+                        }
+                    });
+                }
             })
             .await;
 

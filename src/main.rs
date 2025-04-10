@@ -50,21 +50,20 @@ async fn main() {
 }
 
 async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
-    agent.tts.enqueue("สวัสดีครับ สามารถเรียกผมได้เลยครับ");
+    agent.say("สวัสดีครับ สามารถเรียกผมได้เลยครับ").await;
 
     loop {
         info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
 
-        if agent.is_speaking() {
+        while agent.is_speaking() {
             sleep(Duration::from_millis(300)).await;
-            continue;
         }
 
         if let Some(transcript) = agent.listen().await {
             if let Some(name) = is_called_by_name(&transcript) {
                 info!("👂 ถูกเรียกชื่อว่า: {}", name);
                 memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
-                agent.tts.enqueue("สวัสดีครับ ผมตื่นแล้วครับ");
+                agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
                 break;
             } else {
                 info!("🛌 ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
@@ -80,9 +79,8 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
     use tokio::sync::Mutex;
 
     loop {
-        if agent.is_speaking() {
+        while agent.is_speaking() {
             sleep(Duration::from_millis(300)).await;
-            continue;
         }
 
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
@@ -91,7 +89,7 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             memory_queue.enqueue("last_query", &transcript.clone()).await;
 
             if transcript.contains("นอน") || transcript.contains("พักก่อน") {
-                agent.tts.enqueue("งั้นผมขอพักก่อนนะครับ");
+                agent.say("งั้นผมขอพักก่อนนะครับ").await;
                 break;
             }
 
@@ -116,8 +114,8 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
                 })
                 .await;
 
-            if result.is_err() {
-                agent.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
+            if let Err(_e) = result {
+                agent.say("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้").await;
                 continue;
             }
 
