@@ -1,6 +1,9 @@
+// 📁 src/services/tts/manager.rs
+
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use log::{info, warn};
 use tokio::task;
+use async_trait::async_trait;
 
 use super::interface::TTSService;
 use super::google::GoogleTTS;
@@ -99,5 +102,12 @@ impl SmartTTS {
         }
 
         chunks
+    }
+}
+
+#[async_trait]
+impl TTSService for SmartTTS {
+    async fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.speak(text).await
     }
 }

@@ -44,6 +44,8 @@ num-traits = "0.2.19"
 annoy = "0.1.0"
 murmurhash3 = "0.0.5"
 lazy_static = "1.5.0"
+tokio-stream = "0.1.17"
+futures-util = "0.3.31"
 
 # Optional: สำหรับจัดการ async audio recording
 # symphonia = "0.5"         # หากต้องการ decode/encode media

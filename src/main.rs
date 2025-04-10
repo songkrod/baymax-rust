@@ -1,3 +1,5 @@
+// 📁 src/main.rs
+
 mod utils;
 mod services;
 mod agent;
@@ -15,6 +17,8 @@ use memory::memory_manager::MemoryManager;
 use memory::memory_queue::MemoryQueue;
 use memory::conversation_context::ConversationContext;
 use services::search::manager::VectorSearch;
+use services::tts::manager::SmartTTS;
+use services::tts::queue::TTSQueue;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,7 +39,9 @@ async fn main() {
     let context = ConversationContext::new();
     context.load_from_file();
 
-    let agent = AiAgent::new(&agent_name);
+    let smart_tts = Arc::new(SmartTTS::new());
+    let tts = Arc::new(TTSQueue::new(smart_tts.clone(), 3));
+    let agent = AiAgent::new(&agent_name, tts.clone());
 
     loop {
         wait_for_wake_word(&agent, &memory_queue).await;
@@ -44,7 +50,7 @@ async fn main() {
 }
 
 async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
-    agent.say("สวัสดีครับ สามารถเรียกผมได้เลยครับ").await;
+    agent.tts.enqueue("สวัสดีครับ สามารถเรียกผมได้เลยครับ");
 
     loop {
         info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
@@ -58,7 +64,7 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
             if let Some(name) = is_called_by_name(&transcript) {
                 info!("👂 ถูกเรียกชื่อว่า: {}", name);
                 memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
-                agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
+                agent.tts.enqueue("สวัสดีครับ ผมตื่นแล้วครับ");
                 break;
             } else {
                 info!("🛌 ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
@@ -70,6 +76,9 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
 }
 
 async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
     loop {
         if agent.is_speaking() {
             sleep(Duration::from_millis(300)).await;
@@ -82,30 +91,48 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             memory_queue.enqueue("last_query", &transcript.clone()).await;
 
             if transcript.contains("นอน") || transcript.contains("พักก่อน") {
-                agent.say("งั้นผมขอพักก่อนนะครับ").await;
+                agent.tts.enqueue("งั้นผมขอพักก่อนนะครับ");
                 break;
             }
 
-            let prompt_context = context.get_context_prompt();
-            let result = agent.reason(&transcript, Some(&prompt_context)).await;
+            // 🔍 วิเคราะห์ intent/emotion ก่อน (ไม่ block)
+            let insight = agent.reasoner.analyze_insight(&transcript).await;
+            info!("🧠 insight: {:?}", insight);
 
-            agent.say(&result.reply).await;
+            // 💬 ตอบแบบสตรีมทันที + เก็บ full_reply
+            let full_reply = Arc::new(Mutex::new(String::new()));
+            let reply_for_closure = Arc::clone(&full_reply);
+            let tts = agent.tts.clone();
 
-            if let Some(follow_up) = &result.follow_up {
-                if !follow_up.trim().is_empty() {
-                    agent.say(follow_up).await;
-                }
+            let result = agent
+                .llm
+                .stream_reply(&transcript, move |chunk| {
+                    let reply_for_closure = Arc::clone(&reply_for_closure);
+                    let tts = tts.clone();
+                    tokio::spawn(async move {
+                        reply_for_closure.lock().await.push_str(&chunk);
+                        tts.enqueue(&chunk);
+                    });
+                })
+                .await;
+
+            if result.is_err() {
+                agent.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
+                continue;
             }
 
-            context.append(&transcript, &result.reply);
+            let final_reply = full_reply.lock().await.clone();
+            context.append(&transcript, &final_reply);
             context.trim_oldest(20);
             context.save_to_file();
 
-            let intent = result.intent.clone();
-            let memory_queue_clone = memory_queue.clone();
-            tokio::spawn(async move {
-                memory_queue_clone.enqueue("last_intent", &intent).await;
-            });
+            if let Some(insight) = insight {
+                let intent = insight.intent;
+                let memory_queue_clone = memory_queue.clone();
+                tokio::spawn(async move {
+                    memory_queue_clone.enqueue("last_intent", &intent).await;
+                });
+            }
         } else {
             warn!("📭 ไม่ได้ยินอะไรเลย");
         }

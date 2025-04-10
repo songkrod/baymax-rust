@@ -1,13 +1,11 @@
+// 📁 src/reasoner/reasoning_result.rs
+
 use serde::{Deserialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReasoningResult {
     pub intent: String,
     pub emotion: String,
-    pub reply: String,
-
-    #[serde(default)]
-    pub follow_up: Option<String>,
 
     #[serde(default)]
     pub action: Option<String>,
@@ -16,16 +14,14 @@ pub struct ReasoningResult {
     pub hardware_required: Option<String>,
 
     #[serde(default)]
-    pub confidence: Option<f32>,  // Use Option<f32> to handle missing or null values
+    pub confidence: Option<f32>,
 }
 
 impl ReasoningResult {
-    pub fn error(intent: &str, reply: &str) -> Self {
+    pub fn error(intent: &str) -> Self {
         Self {
             intent: intent.to_string(),
             emotion: "neutral".to_string(),
-            reply: reply.to_string(),
-            follow_up: None,
             action: None,
             hardware_required: None,
             confidence: None,
@@ -36,12 +32,16 @@ impl ReasoningResult {
         serde_json::from_str(json_str)
     }
 
-    pub fn new(intent: &str, emotion: &str, reply: &str, follow_up: Option<String>, action: Option<String>, hardware_required: Option<String>, confidence: Option<f32>) -> Self {
+    pub fn new(
+        intent: &str,
+        emotion: &str,
+        action: Option<String>,
+        hardware_required: Option<String>,
+        confidence: Option<f32>,
+    ) -> Self {
         Self {
             intent: intent.to_string(),
             emotion: emotion.to_string(),
-            reply: reply.to_string(),
-            follow_up,
             action,
             hardware_required,
             confidence,

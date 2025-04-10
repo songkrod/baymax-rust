@@ -1,7 +1,10 @@
+// 📁 src/agent/ai_agent.rs
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use log::{error, info, warn};
 use tokio::time::{sleep, Duration};
@@ -10,7 +13,7 @@ use crate::reasoner::llm_reasoner::LLMReasoner;
 use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
-use crate::services::tts::manager::SmartTTS;
+use crate::services::tts::queue::TTSQueue;
 use crate::utils::hallucination::is_hallucination;
 
 /// Async Skill ฟังก์ชันที่สามารถเรียกได้ภายหลัง เช่น "say", "rest"
@@ -22,7 +25,7 @@ const RAW_AUDIO_PATH: &str = "src/data/caches/audio/input.wav";
 /// ตัวแทนของ Agent ที่สามารถพูด, ฟัง, คิด, และเรียนรู้ skill ได้
 pub struct AiAgent {
     pub name: String,
-    pub tts: Arc<SmartTTS>,
+    pub tts: Arc<TTSQueue>,
     pub asr: Arc<SmartASR>,
     pub llm: Arc<SmartLLM>,
     pub reasoner: Arc<LLMReasoner>,
@@ -30,7 +33,7 @@ pub struct AiAgent {
 }
 
 impl AiAgent {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, tts: Arc<TTSQueue>) -> Self {
         info!("🤖 Initializing AiAgent with name: {}", name);
 
         let llm = Arc::new(SmartLLM::new());
@@ -42,7 +45,7 @@ impl AiAgent {
 
         Self {
             name: name.to_string(),
-            tts: Arc::new(SmartTTS::new()),
+            tts,
             asr: Arc::new(SmartASR::new()),
             llm,
             reasoner,
@@ -52,10 +55,7 @@ impl AiAgent {
 
     pub async fn say(&self, msg: &str) {
         info!("🎙️ {} กำลังพูด: {}", self.name, msg);
-        if let Err(e) = self.tts.speak(msg).await {
-            error!("❌ พูดไม่สำเร็จ: {}", e);
-            self.say_error(&format!("พูดไม่ได้: {}", e)).await;
-        }
+        self.tts.enqueue(msg);
     }
 
     pub fn is_speaking(&self) -> bool {
@@ -121,10 +121,41 @@ impl AiAgent {
         self.reasoner.analyze(&self.name, input, context).await
     }
 
+    /// พูดแบบสตรีม — รับข้อความจาก GPT ทีละคำ ส่งเข้า TTS Queue
+    pub async fn think_and_say_streaming(&self, input: &str) {
+        let name = self.name.clone();
+        let tts = Arc::clone(&self.tts);
+
+        // ล็อกไม่ให้พูดซ้อนกัน (กัน race condition)
+        let lock = Arc::new(Mutex::new(()));
+        let lock_clone = Arc::clone(&lock);
+        let _guard = lock.lock().await;
+
+        info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
+
+        let result = self
+            .llm
+            .stream_reply(input, move |chunk| {
+                let tts = Arc::clone(&tts);
+                let lock = Arc::clone(&lock_clone);
+
+                // ส่ง chunk เข้า queue อย่างปลอดภัย
+                tokio::spawn(async move {
+                    let _guard = lock.lock().await;
+                    tts.enqueue(&chunk);
+                });
+            })
+            .await;
+
+        if result.is_err() {
+            self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
+        }
+    }
+
     async fn say_error(&self, msg: &str) {
         error!("❌ {} error: {}", self.name, msg);
         let polite_msg = format!("ขออภัยครับ เกิดข้อผิดพลาด: {}", msg);
-        let _ = self.tts.speak(&polite_msg).await;
+        self.tts.enqueue(&polite_msg);
     }
 
     fn is_hallucination(&self, text: &str) -> bool {
