@@ -6,3 +6,4 @@ pub mod self_knowledge;
 pub mod embeddings;
 pub mod hash;
 pub mod file;
+pub mod streaming;
