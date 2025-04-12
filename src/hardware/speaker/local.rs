@@ -73,4 +73,14 @@ impl SpeakerBackend for OsSpeakerBackend {
         info!("📡 [OsSpeakerBackend] is_busy เรียกใช้ → {}", busy);
         busy
     }
+
+    async fn play_beep_start(&self) {
+        info!("🔔 [Beep] เริ่มฟัง (start)");
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+
+    async fn play_beep_end(&self) {
+        info!("🔔 [Beep] จบการฟัง (end)");
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
 }

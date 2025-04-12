@@ -18,7 +18,6 @@ impl SpeakerController {
     }
 }
 
-// ✅ ทำให้ SpeakerController เองก็เป็น SpeakerBackend ด้วย
 #[async_trait]
 impl SpeakerBackend for SpeakerController {
     async fn play(&self, data: &[u8]) -> Result<(), String> {
@@ -27,6 +26,14 @@ impl SpeakerBackend for SpeakerController {
 
     async fn is_busy(&self) -> bool {
         self.backend.is_busy().await
+    }
+
+    async fn play_beep_start(&self) {
+        self.backend.play_beep_start().await
+    }
+
+    async fn play_beep_end(&self) {
+        self.backend.play_beep_end().await
     }
 }
 

@@ -48,23 +48,20 @@ async fn main() {
     let tts = Arc::new(TTSQueue::new(smart_tts.clone(), speaker, 3));
     let agent = AiAgent::new(&agent_name, tts.clone());
 
-    agent.think_and_say_streaming("หิวข้าวจัง").await;
+    // agent.think_and_say_streaming("หิวข้าวจัง").await;
 
-    // 🧏‍♂️ รอจนพูดเสร็จก่อนค่อยออก
-    while agent.is_speaking().await {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // agent.await_speaking_done().await;
+    // info!("👋 จบแล้ว ออกจากโปรแกรมได้");
+
+    loop {
+        wait_for_wake_word(&agent, &memory_queue).await;
+        wait_for_command(&agent, &memory_queue, &context).await;
     }
-    
-    info!("👋 จบแล้ว ออกจากโปรแกรมได้");
-
-    // loop {
-    //     wait_for_wake_word(&agent, &memory_queue).await;
-    //     wait_for_command(&agent, &memory_queue, &context).await;
-    // }
 }
 
 async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     agent.say("สวัสดีครับ สามารถเรียกผมได้เลยครับ").await;
+    agent.await_speaking_done().await;
 
     loop {
         info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
@@ -74,6 +71,7 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
                 info!("🗢 ถูกเรียกชื่อว่า: {}", name);
                 memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
                 agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
+                agent.await_speaking_done().await;
                 break;
             } else {
                 info!("🛌 ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
@@ -86,13 +84,7 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
 
 async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
     loop {
-        // ✅ ถ้ายังพูดอยู่ → ข้ามรอบนี้ไปก่อนเลย
-        if agent.is_speaking().await {
-            info!("🗢 หุ่นกำลังพูดอยู่ — งดฟังใหม่รอบนี้");
-            sleep(Duration::from_millis(300)).await;
-            continue;
-        }
-
+        agent.await_speaking_done().await;
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
 
         if let Some(transcript) = agent.listen().await {
@@ -100,15 +92,14 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
 
             if transcript.contains("นอน") || transcript.contains("พักก่อน") {
                 agent.say("งั้นผมขอพักก่อนนะครับ").await;
+                agent.await_speaking_done().await;
                 break;
             }
 
-            // 🔍 วิเคราะห์ intent/emotion ก่อน (ไม่ block)
             let insight_prompt = build_insight_prompt(&transcript);
             let insight = agent.reasoner.analyze_insight(&insight_prompt).await;
             info!("🧠 insight: {:?}", insight);
 
-            // 💬 ตอบแบบสตรีมผ่าน ai_agent และรอผลเต็ม
             let final_reply = agent.think_and_say_streaming(&transcript).await;
             info!("💬 ตอบคำถาม: {}", final_reply);
             context.append(&transcript, &final_reply);

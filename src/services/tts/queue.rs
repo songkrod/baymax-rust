@@ -63,11 +63,6 @@ impl TTSQueue {
                         if let Err(e) = speaker_clone.play(&mp3).await {
                             error!("❌ เล่นเสียงล้มเหลว: {}", e);
                         }
-
-                        // if job.with_pause_after {
-                        //     debug!("🕒 พัก 50ms");
-                        //     sleep(Duration::from_millis(50)).await;
-                        // }
                     } else {
                         error!("⚠️ ไม่มี mp3_data สำหรับ '{}'", job.text);
                     }
@@ -104,6 +99,7 @@ impl TTSQueue {
 
         info!("📥 เพิ่มเข้า TTS Queue: {}", text);
 
+        // ✅ quick fix: await synthesize ก่อน push
         task::spawn(async move {
             debug!("🌀 สร้างเสียง: {}", text);
             let mp3_data = match tts.synthesize(&text).await {
@@ -155,6 +151,14 @@ impl TTSQueue {
 
     pub fn block_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.is_speaking)
+    }
+
+    pub async fn play_beep_start(&self) {
+        self.speaker.play_beep_start().await;
+    }
+
+    pub async fn play_beep_end(&self) {
+        self.speaker.play_beep_end().await;
     }
 }
 

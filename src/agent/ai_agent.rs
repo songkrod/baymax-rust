@@ -61,14 +61,17 @@ impl AiAgent {
 
         info!("🎡 {} กำลังพูด: {}", self.name, msg);
         self.tts.enqueue_and_wait(msg).await;
-
-        while self.tts.is_speaking().await {
-            sleep(Duration::from_millis(100)).await;
-        }
+        self.await_speaking_done().await;
 
         {
             let mut flag = self.is_speaking_flag.lock().await;
             *flag = false;
+        }
+    }
+
+    pub async fn await_speaking_done(&self) {
+        while self.tts.is_speaking().await {
+            sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -143,9 +146,7 @@ impl AiAgent {
             self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
         }
 
-        while self.tts.is_speaking().await {
-            sleep(Duration::from_millis(300)).await;
-        }
+        self.await_speaking_done().await;
 
         {
             let mut flag = speaking_flag.lock().await;
@@ -192,16 +193,17 @@ impl AiAgent {
     }
 
     pub async fn listen(&self) -> Option<String> {
-        while self.is_speaking().await {
-            sleep(Duration::from_millis(300)).await;
-        }
+        self.await_speaking_done().await;
 
+        self.tts.play_beep_start().await;
         info!("🎤 [{}] เริ่มบันทึกเสียงผู้ใช้...", self.name);
 
         let result = self
             .asr
             .listen(RAW_AUDIO_PATH, Some(10_000), Some(1000))
             .await;
+
+        self.tts.play_beep_end().await;
 
         match &result {
             Some(text) => {

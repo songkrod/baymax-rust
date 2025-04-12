@@ -15,7 +15,7 @@ impl LLMService for OpenAIGPT {
         let client = Client::new();
 
         let body = json!({
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4o",
             "messages": [{"role": "user", "content": input}],
         });
 
@@ -46,7 +46,7 @@ impl LLMStreamable for OpenAIGPT {
         let client = Client::new();
 
         let body = json!({
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4o",
             "stream": true,
             "temperature": 0.8,
             "messages": [
