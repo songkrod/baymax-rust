@@ -45,7 +45,6 @@ async fn main() {
     let smart_tts = Arc::new(SmartTTS::new());
     let speaker: Arc<dyn SpeakerBackend> = create_speaker_controller_from_env();
 
-    // ✅ สร้าง TTSQueue และได้ receiver กลับมาจาก tuple
     let (tts_queue, done_rx) = TTSQueue::new(smart_tts.clone(), speaker, 3);
     let tts = Arc::new(tts_queue);
 
@@ -53,7 +52,7 @@ async fn main() {
 
     loop {
         wait_for_wake_word(&agent, &memory_queue).await;
-        wait_for_command(&agent, &memory_queue, &context).await;
+        wait_for_command(&agent, &memory_queue, &context, &memory_manager).await;
     }
 }
 
@@ -78,7 +77,12 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     }
 }
 
-async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
+async fn wait_for_command(
+    agent: &AiAgent,
+    memory_queue: &MemoryQueue,
+    context: &ConversationContext,
+    memory_manager: &Arc<Mutex<MemoryManager>>,
+) {
     loop {
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
 
@@ -94,8 +98,13 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             let insight = agent.reasoner.analyze_insight(&insight_prompt).await;
             info!("🧠 insight: {:?}", insight);
 
+            // ✅ เพิ่ม vector context ก่อนพูดจริง
+            let vector_matches = memory_manager.lock().await.search_memory(&transcript).await;
+            let vector_context = vector_matches.join("\n");
             let recent_context = context.get_context_prompt();
-            let final_reply = agent.think_and_say_streaming(&transcript, &recent_context).await;
+            let full_context = format!("{}\n{}", vector_context, recent_context);
+
+            let final_reply = agent.think_and_say_streaming(&transcript, &full_context).await;
             info!("💬 ตอบคำถาม: {}", final_reply);
             context.append(&transcript, &final_reply);
             context.trim_oldest(20);
