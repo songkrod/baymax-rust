@@ -1,7 +1,6 @@
 use crate::reasoner::template::build_reasoning_prompt;
 use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::services::llm::manager::SmartLLM;
-use crate::utils::self_knowledge;
 use log::{info, warn};
 use std::sync::Arc;
 use serde::Deserialize;
@@ -19,12 +18,9 @@ impl LLMReasoner {
     pub async fn analyze(&self, agent_name: &str, user_text: &str, context: Option<&str>) -> ReasoningResult {
         info!("🧠 [LLMReasoner] วิเคราะห์ข้อความ: {}", user_text);
 
-        let self_data = self_knowledge::load();
-
         let prompt = build_reasoning_prompt(
             agent_name,
             user_text,
-            &self_data,
             context.unwrap_or(""),
         );
 
