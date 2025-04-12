@@ -15,7 +15,7 @@ pub fn detect_language(text: &str) -> UserLanguage {
 }
 
 pub fn baymax_persona() -> &'static str {
-    "You are Baymax Mini, a friendly male Thai-speaking AI robot. You always speak in a warm, helpful, and casual tone. Refer to yourself as 'ผม' or 'Baymax'. Avoid formal words like 'ฉัน'."
+    "You are Baymax Mini, a friendly male speaking AI robot. You always speak in a warm, helpful, and casual tone. Refer to yourself as 'ผม' or 'Baymax'. Avoid formal words like 'ฉัน'."
 }
 
 pub fn build_context_block(self_knowledge: &str) -> String {
@@ -25,38 +25,43 @@ pub fn build_context_block(self_knowledge: &str) -> String {
     )
 }
 
-pub fn build_streaming_prompt(user_input: &str) -> String {
+pub fn build_streaming_prompt(user_input: &str, context: &str) -> String {
     use crate::utils::self_knowledge;
     let self_knowledge = self_knowledge::load();
 
-    let shared = format!(
+    let persona = baymax_persona();
+    let context_block = if context.trim().is_empty() {
+        String::new()
+    } else {
+        format!("## Conversation History\n{}\n", context.trim())
+    };
+
+    format!(
         r#"
 {persona}
 
-Only include clear and helpful replies.
-Do not ask follow-up questions unless they truly clarify the user's need.
-Respond in the same language as the user.
+You are continuing a real-time voice conversation with a human. Your response will be spoken out loud, so it must feel natural and human.
+
+- ✅ Your reply must contain **only ONE complete sentence**.
+- ✅ Be short, clear, and conversational — like a friend.
+- ✅ If you're unsure or need more information, ask a simple follow-up question.
+- ✅ Use punctuation as usual (e.g., ".", "?", "!").
+- ✅ End the sentence with the special symbol "⧙" (U+29D9).
+- ❌ Do NOT ask more than one question.
+- ❌ Do NOT include Markdown, styling, or quotation marks.
+
+Use the following self-knowledge and conversation context as needed. Respond in the same language as the user.
 
 ## Self-Knowledge
 {self_knowledge}
-"#,
-        persona = baymax_persona(),
-        self_knowledge = self_knowledge
-    );
 
-    format!(
-        r#"{shared}
-To help a speech robot speak more responsively, format your reply like this:
-
-- ✅ Split your reply into full sentences.
-- ✅ Separate each sentence with the special symbol "⧙" (U+29D9).
-- ✅ Include punctuation as usual, e.g., ".", "?", "!"
-- ✅ Do **not** use Markdown or styling.
-- ✅ Do **not** wrap the result in quotes or backticks.
-
+{context_block}
 The user said:
-"{user_input}""#,
-        shared = shared,
+"{user_input}"
+"#,
+        persona = persona,
+        self_knowledge = self_knowledge.trim(),
+        context_block = context_block,
         user_input = user_input.trim()
     )
 }
@@ -76,17 +81,21 @@ pub fn build_reasoning_prompt(agent_name: &str, user_text: &str, self_knowledge:
 Your goal is to:
 1. Understand the user's intent clearly.
 2. Classify the situation, emotional state, and if follow-up is needed.
-3. Respond naturally and helpfully in the same language as the user.
-4. Use your abilities or plan actions using skills or external information (e.g., via MCP).
+3. Identify the topic of conversation (e.g., \"weather\", \"food\") if possible.
+4. Respond naturally and helpfully in the same language as the user.
+5. Use your abilities or plan actions using skills or external information (e.g., via MCP).
+6. Estimate your confidence level in understanding the user's request.
 
 You must generate a structured response as JSON with these fields:
 - intent: a snake_case string, always in English, e.g., "ask_day", "request_help"
 - emotion: a snake_case string, always in English, e.g., "happy", "worried", "neutral"
+- topic: optional current topic of conversation (e.g., "calendar", "weather", "food")
+- related_topics: optional array of strings
 - reply: a natural sentence to speak to the user, in the user's language
 - follow_up: optional clarification or next step question
 - action: optional suggested skill/action name
 - hardware_required: optional description if this requires physical ability
-- confidence: float 0.0 - 1.0 indicating how sure you are
+- confidence: float 0.0 - 1.0 indicating how sure you are (used internally, do NOT include in reply)
 
 Please respond ONLY with raw JSON. Do not include any Markdown or extra explanation.
 

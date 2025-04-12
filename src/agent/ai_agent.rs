@@ -75,7 +75,7 @@ impl AiAgent {
         }
     }
 
-    pub async fn think_and_say_streaming(&self, input: &str) -> String {
+    pub async fn think_and_say_streaming(&self, input: &str, context: &str) -> String {
         info!("🚦 เรียกใช้ think_and_say_streaming แล้ว");
         let name = self.name.clone();
         let tts = Arc::clone(&self.tts);
@@ -90,12 +90,12 @@ impl AiAgent {
 
         info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
 
-        self.tts.enqueue_with_start_time("ขอผมตรวจสอบสักครู่นะครับ", Some(t0));
+        // self.tts.enqueue_with_start_time("โอเคครับ", Some(t0));
 
         let buffer = Arc::new(Mutex::new(String::new()));
         let reply_for_closure = Arc::clone(&full_reply);
 
-        let streaming_prompt = build_streaming_prompt(input);
+        let streaming_prompt = build_streaming_prompt(input, context);
         debug!("📋 [Prompt] {}", streaming_prompt);
 
         debug!("🧪 [LLM] เริ่ม stream_reply");

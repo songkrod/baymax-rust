@@ -48,11 +48,6 @@ async fn main() {
     let tts = Arc::new(TTSQueue::new(smart_tts.clone(), speaker, 3));
     let agent = AiAgent::new(&agent_name, tts.clone());
 
-    // agent.think_and_say_streaming("หิวข้าวจัง").await;
-
-    // agent.await_speaking_done().await;
-    // info!("👋 จบแล้ว ออกจากโปรแกรมได้");
-
     loop {
         wait_for_wake_word(&agent, &memory_queue).await;
         wait_for_command(&agent, &memory_queue, &context).await;
@@ -100,7 +95,8 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             let insight = agent.reasoner.analyze_insight(&insight_prompt).await;
             info!("🧠 insight: {:?}", insight);
 
-            let final_reply = agent.think_and_say_streaming(&transcript).await;
+            let recent_context = context.get_context_prompt();
+            let final_reply = agent.think_and_say_streaming(&transcript, &recent_context).await;
             info!("💬 ตอบคำถาม: {}", final_reply);
             context.append(&transcript, &final_reply);
             context.trim_oldest(20);
