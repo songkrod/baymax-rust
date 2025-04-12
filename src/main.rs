@@ -22,6 +22,7 @@ use services::tts::manager::SmartTTS;
 use services::tts::queue::TTSQueue;
 use hardware::speaker::controller::create_speaker_controller_from_env;
 use hardware::speaker::interface::SpeakerBackend;
+use reasoner::template::build_insight_prompt;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -47,10 +48,19 @@ async fn main() {
     let tts = Arc::new(TTSQueue::new(smart_tts.clone(), speaker, 3));
     let agent = AiAgent::new(&agent_name, tts.clone());
 
-    loop {
-        wait_for_wake_word(&agent, &memory_queue).await;
-        wait_for_command(&agent, &memory_queue, &context).await;
+    agent.think_and_say_streaming("หิวข้าวจัง").await;
+
+    // 🧏‍♂️ รอจนพูดเสร็จก่อนค่อยออก
+    while agent.is_speaking().await {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    
+    info!("👋 จบแล้ว ออกจากโปรแกรมได้");
+
+    // loop {
+    //     wait_for_wake_word(&agent, &memory_queue).await;
+    //     wait_for_command(&agent, &memory_queue, &context).await;
+    // }
 }
 
 async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
@@ -94,7 +104,8 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             }
 
             // 🔍 วิเคราะห์ intent/emotion ก่อน (ไม่ block)
-            let insight = agent.reasoner.analyze_insight(&transcript).await;
+            let insight_prompt = build_insight_prompt(&transcript);
+            let insight = agent.reasoner.analyze_insight(&insight_prompt).await;
             info!("🧠 insight: {:?}", insight);
 
             // 💬 ตอบแบบสตรีมผ่าน ai_agent และรอผลเต็ม

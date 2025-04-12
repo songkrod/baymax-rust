@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
 use log::{debug, error, info, warn};
 use tokio::sync::Mutex;
@@ -13,9 +14,10 @@ use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
 use crate::services::tts::queue::TTSQueue;
 use crate::utils::hallucination::is_hallucination;
-use crate::utils::streaming::chunker::split_smart_thai_chunks;
+use crate::utils::streaming::chunker::{split_smart_thai_chunks, SmartChunk};
 use crate::reasoner::llm_reasoner::LLMReasoner;
 use crate::reasoner::reasoning_result::ReasoningResult;
+use crate::reasoner::template::build_streaming_prompt;
 
 /// Async Skill ฟังก์ชันที่สามารถเรียกได้ภายหลัง เช่น "say", "rest"
 type SkillFn = fn(Option<&str>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -41,7 +43,7 @@ impl AiAgent {
         let llm = Arc::new(SmartLLM::new());
         let reasoner = Arc::new(LLMReasoner::new(Arc::clone(&llm)));
 
-        info!("🧠 Reasoner initialized");
+        info!("🫠 Reasoner initialized");
         info!("🔡 TTS engine ready");
         info!("🫯 ASR engine ready");
 
@@ -62,7 +64,7 @@ impl AiAgent {
             *flag = true;
         }
 
-        info!("🎙️ {} กำลังพูด: {}", self.name, msg);
+        info!("🎡 {} กำลังพูด: {}", self.name, msg);
         self.tts.enqueue_and_wait(msg).await;
 
         while self.tts.is_speaking().await {
@@ -73,6 +75,94 @@ impl AiAgent {
             let mut flag = self.is_speaking_flag.lock().await;
             *flag = false;
         }
+    }
+
+    pub async fn think_and_say_streaming(&self, input: &str) -> String {
+        info!("🚦 เรียกใช้ think_and_say_streaming แล้ว");
+        let name = self.name.clone();
+        let tts = Arc::clone(&self.tts);
+        let full_reply = Arc::new(Mutex::new(String::new()));
+        let speaking_flag = Arc::clone(&self.is_speaking_flag);
+
+        let t0 = Instant::now();
+
+        {
+            let mut flag = speaking_flag.lock().await;
+            *flag = true;
+        }
+
+        info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
+
+        let buffer = Arc::new(Mutex::new(String::new()));
+        let reply_for_closure = Arc::clone(&full_reply);
+
+        let streaming_prompt = build_streaming_prompt(input);
+        debug!("📋 prompt: {}", streaming_prompt);
+
+        debug!("🧪 เริ่ม stream_reply");
+        let result = self.llm.stream_reply(&streaming_prompt, {
+            let buffer = Arc::clone(&buffer);
+            let tts = Arc::clone(&tts);
+
+            move |chunk| {
+                debug!("🧹 received chunk: '{}'", chunk);
+
+                let buffer = Arc::clone(&buffer);
+                let tts = Arc::clone(&tts);
+                let reply_for_closure = Arc::clone(&reply_for_closure);
+                let t0 = t0.clone();
+
+                tokio::spawn(async move {
+                    reply_for_closure.lock().await.push_str(&chunk);
+
+                    let mut buf = buffer.lock().await;
+                    buf.push_str(&chunk);
+                    debug!("🧠 current buffer: {}", buf);
+
+                    let (chunks, rest) = split_smart_thai_chunks(&buf, 6);
+                    *buf = rest;
+
+                    let chunk_strs: Vec<_> = chunks.iter().map(|c| format!("{:?}", c)).collect();
+                    debug!("🔎 Chunk list: [{}]", chunk_strs.join(", "));
+
+                    for chunk in chunks {
+                        match chunk {
+                            SmartChunk::Normal(text) => {
+                                debug!("📤 ส่งเข้า TTS (ปกติ): {}", text);
+                                tts.enqueue_with_start_time(&text, Some(t0));
+                            }
+                            SmartChunk::WithPause(text) => {
+                                debug!("📤 ส่งเข้า TTS (พักก่อน): {}", text);
+                                tts.enqueue_with_start_time_and_pause(&text, Some(t0), true);
+                            }
+                        }
+                    }
+                });
+            }
+        }).await;
+
+        if result.is_err() {
+            error!("🛑 stream_reply ล้มเหลว: {:?}", result);
+            self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
+        }
+
+        while self.tts.is_speaking().await {
+            sleep(Duration::from_millis(300)).await;
+        }
+
+        {
+            let mut flag = speaking_flag.lock().await;
+            *flag = false;
+        }
+
+        let reply = {
+            let lock = full_reply.lock().await;
+            lock.clone()
+        };
+
+        info!("🧾 GPT full reply: {}", reply);
+
+        reply
     }
 
     pub async fn is_speaking(&self) -> bool {
@@ -101,7 +191,7 @@ impl AiAgent {
     }
 
     pub fn learn_skill(&mut self, name: &str, function: SkillFn) {
-        info!("🧠 {} เรียนรู้ skill ใหม่: '{}'", self.name, name);
+        info!("🫠 {} เรียนรู้ skill ใหม่: '{}'", self.name, name);
         self.skills.insert(name.to_string(), function);
     }
 
@@ -126,7 +216,7 @@ impl AiAgent {
                 }
             }
             None => {
-                warn!("📭 [{}] ไม่พบข้อความเสียง", self.name);
+                warn!("📬 [{}] ไม่พบข้อความเสียง", self.name);
             }
         }
 
@@ -134,78 +224,8 @@ impl AiAgent {
     }
 
     pub async fn reason(&self, input: &str, context: Option<&str>) -> ReasoningResult {
-        info!("🧠 [{}] กำลังคิดคำตอบจากข้อความ: {}", self.name, input);
+        info!("🫠 [{}] กำลังคิดคำตอบจากข้อความว่า: {}", self.name, input);
         self.reasoner.analyze(&self.name, input, context).await
-    }
-
-    pub async fn think_and_say_streaming(&self, input: &str) -> String {
-        let name = self.name.clone();
-        let tts = Arc::clone(&self.tts);
-        let full_reply = Arc::new(Mutex::new(String::new()));
-        let speaking_flag = Arc::clone(&self.is_speaking_flag);
-
-        {
-            let mut flag = speaking_flag.lock().await;
-            *flag = true;
-        }
-
-        info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
-
-        let buffer = Arc::new(Mutex::new(String::new()));
-        let reply_for_closure = Arc::clone(&full_reply);
-
-        let result = self
-            .llm
-            .stream_reply(input, {
-                let buffer = Arc::clone(&buffer);
-                let tts = Arc::clone(&tts);
-
-                move |chunk| {
-                    debug!("🧩 received chunk: '{}'", chunk);
-                    let buffer = Arc::clone(&buffer);
-                    let tts = Arc::clone(&tts);
-                    let reply_for_closure = Arc::clone(&reply_for_closure);
-
-                    tokio::spawn(async move {
-                        reply_for_closure.lock().await.push_str(&chunk);
-
-                        let mut buf = buffer.lock().await;
-                        buf.push_str(&chunk);
-                        debug!("🧠 current buffer: {}", buf);
-
-                        let (chunks, rest) = split_smart_thai_chunks(&buf, 6);
-                        *buf = rest;
-
-                        for chunk in chunks {
-                            debug!("📤 ส่งเข้า TTS: {}", chunk);
-                            tts.enqueue(&chunk);
-                        }
-                    });
-                }
-            })
-            .await;
-
-        debug!("📛 LLM stream result = {:?}", result);
-
-        if result.is_err() {
-            self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
-        }
-
-        while self.tts.is_speaking().await {
-            sleep(Duration::from_millis(300)).await;
-        }
-
-        {
-            let mut flag = speaking_flag.lock().await;
-            *flag = false;
-        }
-
-        let reply = {
-            let lock = full_reply.lock().await;
-            lock.clone()
-        };
-
-        reply
     }
 
     async fn say_error(&self, msg: &str) {
@@ -223,7 +243,7 @@ impl AiAgent {
     }
 
     pub async fn fallback(&self) {
-        warn!("🤔 {} ไม่เข้าใจคำสั่งที่ได้รับ", self.name);
+        warn!("🧐 {} ไม่เข้าใจคำสั่งที่ได้รับ", self.name);
         self.say("ขออภัยครับ ผมยังไม่เข้าใจคำสั่งนั้น").await;
     }
 }

@@ -47,6 +47,10 @@ impl TTSService for GoogleTTS {
     }
 
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, String> {
+        use log::{info, debug, error};
+
+        info!("🔊 เริ่ม synthesize ด้วย Google TTS: {}", text);
+
         let key_path = std::env::var("google_application_credentials")
             .map_err(|e| format!("env error: {}", e))?;
         let key_str = fs::read_to_string(Path::new(&key_path)).map_err(|e| format!("read error: {}", e))?;
@@ -61,12 +65,14 @@ impl TTSService for GoogleTTS {
             exp: (now + Duration::minutes(60)).timestamp() as usize,
         };
 
+        debug!("🪪 สร้าง JWT สำหรับ Google TTS");
         let encoding_key = EncodingKey::from_rsa_pem(key.private_key.as_bytes())
             .map_err(|e| format!("rsa error: {}", e))?;
         let jwt = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
             .map_err(|e| format!("jwt error: {}", e))?;
 
         let client = Client::new();
+        debug!("🔐 ขอ access_token...");
         let res = client.post(&key.token_uri)
             .form(&[
                 ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
@@ -90,14 +96,27 @@ impl TTSService for GoogleTTS {
             }
         });
 
+        debug!("📤 ส่ง request ไป Google TTS...");
         let res = client.post(url)
             .header("Authorization", bearer)
             .json(&request_body)
             .send()
             .await.map_err(|e| format!("tts request error: {}", e))?;
 
+        let status = res.status();
         let json = res.json::<serde_json::Value>().await.map_err(|e| format!("tts response error: {}", e))?;
+
+        if !status.is_success() {
+            error!("❌ Google TTS HTTP error: {} => {:?} (text = '{}')", status, json, text);
+            return Err(format!("google tts api failed: {:?}", json));
+        }
+
         let audio_base64 = json["audioContent"].as_str().ok_or("missing audioContent")?;
-        general_purpose::STANDARD.decode(audio_base64).map_err(|e| format!("base64 decode error: {}", e))
+        let mp3_data = general_purpose::STANDARD
+            .decode(audio_base64)
+            .map_err(|e| format!("base64 decode error: {}", e))?;
+
+        info!("✅ Google TTS สำเร็จ ({} bytes)", mp3_data.len());
+        Ok(mp3_data)
     }
 }

@@ -5,6 +5,7 @@ use crate::utils::self_knowledge;
 use log::{info, warn};
 use std::sync::Arc;
 use serde::Deserialize;
+use crate::reasoner::template::build_insight_prompt;
 
 pub struct LLMReasoner {
     llm: Arc<SmartLLM>,
@@ -55,22 +56,7 @@ impl LLMReasoner {
             confidence: f32,
         }
 
-        let prompt = format!(
-            r#"
-            The following is the user's message:
-            "{}"
-
-            Analyze and return a JSON object only. Fields must be:
-            - intent: in lowercase snake_case (e.g. "ask_weather", "request_food")
-            - emotion: lowercase English (e.g. "curious", "happy")
-            - confidence: number between 0.0 and 1.0
-
-            Response must be a valid JSON object only, without any markdown, code block, or extra explanation.
-            For example:
-            {{"intent": "ask_weather", "emotion": "curious", "confidence": 0.85}}
-            "#,
-            input.trim()
-        );
+        let prompt = build_insight_prompt(input);
 
         match self.llm.complete(&prompt).await {
             Ok(mut raw) => {

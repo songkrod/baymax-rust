@@ -52,11 +52,6 @@ impl SmartLLM {
     where
         F: FnMut(String) + Send + 'static,
     {
-        // let prompt = format!(
-        //     "Please respond clearly with appropriate punctuation. If the response is in Thai or any other language, add spaces between words for readability and TTS synthesis.\n\nThe following is the user's message:\n{}",
-        //     input
-        // );
-
         match &self.backend {
             LLMBackend::OpenAI { stream, .. } => {
                 LLMStreamable::stream_chat(stream.as_ref(), input, on_chunk).await

@@ -1,5 +1,5 @@
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use log::{info, warn};
+use log::{info, warn, error, debug};
 use tokio::task;
 use async_trait::async_trait;
 
@@ -46,12 +46,19 @@ impl SmartTTS {
 
     pub async fn speak(&self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.is_speaking.store(true, Ordering::Relaxed);
+        info!("🔈 [SmartTTS] กำลังพูด: '{}'", text);
 
         let result = match self.primary.speak(text).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                warn!("⚠️ Primary TTS failed: {}. Falling back to local.", e);
-                self.fallback.speak(text).await
+                warn!("⚠️ Primary TTS failed: {}. Falling back...", e);
+                match self.fallback.speak(text).await {
+                    Ok(_) => Ok(()),
+                    Err(fallback_err) => {
+                        error!("❌ ทั้ง Primary และ Fallback TTS ล้มเหลว: '{}' => {}", text, fallback_err);
+                        Err(fallback_err)
+                    }
+                }
             }
         };
 
@@ -60,17 +67,31 @@ impl SmartTTS {
     }
 
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, String> {
+        info!("🎼 [SmartTTS] synthesize เริ่ม: '{}'", text);
         match self.primary.synthesize(text).await {
-            Ok(data) => Ok(data),
+            Ok(data) => {
+                debug!("✅ [SmartTTS] primary synthesize success: {} bytes", data.len());
+                Ok(data)
+            }
             Err(e) => {
-                warn!("⚠️ Primary synthesize failed: {}. Falling back.", e);
-                self.fallback.synthesize(text).await
+                warn!("⚠️ Primary synthesize failed: {}. Falling back...", e);
+                match self.fallback.synthesize(text).await {
+                    Ok(data) => {
+                        debug!("✅ fallback synthesize success: {} bytes (text: '{}')", data.len(), text);
+                        Ok(data)
+                    }
+                    Err(fallback_err) => {
+                        error!("❌ ทั้ง Primary และ Fallback synthesize ล้มเหลว: '{}' => {}", text, fallback_err);
+                        Err(fallback_err)
+                    }
+                }
             }
         }
     }
 
     pub async fn speak_streamed(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let chunks = Self::split_into_chunks(text);
+        debug!("📦 [SmartTTS] split stream chunks = {:?}", chunks);
 
         for chunk in chunks {
             let primary = Arc::clone(&self.primary);
@@ -80,7 +101,9 @@ impl SmartTTS {
             task::spawn(async move {
                 if let Err(e) = primary.speak(&chunk_clone).await {
                     warn!("⚠️ Streamed chunk failed: {}, fallback...", e);
-                    let _ = fallback.speak(&chunk_clone).await;
+                    if let Err(fallback_err) = fallback.speak(&chunk_clone).await {
+                        error!("❌ fallback ก็ล้มเหลว: {} => {}", chunk_clone, fallback_err);
+                    }
                 }
             });
 

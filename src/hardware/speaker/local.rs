@@ -1,8 +1,9 @@
 use async_trait::async_trait;
-use log::info;
+use log::{info, error, debug};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use std::time::Instant;
 use super::interface::SpeakerBackend;
 
 pub struct OsSpeakerBackend {
@@ -23,6 +24,8 @@ impl SpeakerBackend for OsSpeakerBackend {
         use tempfile::NamedTempFile;
         use std::io::Write;
 
+        debug!("🔉 ขนาด mp3 ที่รับเข้ามา: {} bytes", data.len());
+
         let mut temp = NamedTempFile::new().map_err(|e| e.to_string())?;
         temp.write_all(data).map_err(|e| e.to_string())?;
         let path = temp.path().to_str().unwrap().to_string();
@@ -40,11 +43,16 @@ impl SpeakerBackend for OsSpeakerBackend {
             *flag = true;
         }
 
+        let t0 = Instant::now();
+
         let status = Command::new(player)
             .arg(&path)
             .output()
             .await
             .map_err(|e| format!("ไม่สามารถเรียก player ได้: {}", e))?;
+
+        let elapsed = t0.elapsed().as_secs_f32();
+        info!("🔈 เสร็จสิ้นการเล่นเสียงใน {:.2} วินาที", elapsed);
 
         {
             let mut flag = self.is_active.lock().await;
@@ -54,6 +62,8 @@ impl SpeakerBackend for OsSpeakerBackend {
         if status.status.success() {
             Ok(())
         } else {
+            let stderr = String::from_utf8_lossy(&status.stderr);
+            error!("❌ player exited with code {:?}, stderr: {}", status.status.code(), stderr);
             Err(format!("player exited with {:?}", status.status.code()))
         }
     }

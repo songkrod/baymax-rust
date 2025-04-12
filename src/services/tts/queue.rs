@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::time::{Instant, Duration};
 use tokio::task;
-use tokio::time::{sleep, Duration};
+use tokio::time::sleep;
 use log::{info, debug, error};
 
 use crate::services::tts::interface::TTSService;
@@ -18,6 +19,8 @@ pub struct TTSQueue {
 struct TTSJob {
     text: String,
     mp3_data: Option<Vec<u8>>,
+    start_time: Option<Instant>,
+    with_pause_after: bool,
 }
 
 impl TTSQueue {
@@ -43,25 +46,34 @@ impl TTSQueue {
                 };
 
                 if let Some(job) = next_job {
+                    debug!("🧾 ประมวลผล job: '{}' (มี mp3 = {})", job.text, job.mp3_data.is_some());
                     if let Some(mp3) = job.mp3_data {
                         is_speaking_clone.store(true, Ordering::Relaxed);
 
                         let permit = preload_semaphore_clone.clone().acquire_owned().await.unwrap();
+
+                        if let Some(t0) = job.start_time {
+                            let elapsed = t0.elapsed().as_secs_f32();
+                            info!("📈 [Perf] เริ่มพูดหลัง GPT ใช้เวลา: {:.2}s", elapsed);
+                        }
 
                         info!("🔊 [TTSQueue] กำลังพูด: {}", job.text);
                         if let Err(e) = speaker_clone.play(&mp3).await {
                             error!("❌ เล่นเสียงล้มเหลว: {}", e);
                         }
 
-                        sleep(Duration::from_millis(300)).await;
+                        let dur = estimate_mp3_duration(&mp3);
+                        debug!("🕒 ประมาณเวลาพูด: {:.2}s", dur.as_secs_f32());
+                        sleep(dur).await;
+
                         drop(permit);
                     } else {
-                        error!("⚠️ ไม่มี mp3_data สำหรับ '{}', ข้าม...", job.text);
+                        error!("⚠️ ไม่มี mp3_data สำหรับ '{}' ข้าม...", job.text);
                     }
 
-                    // จบ chunk นี้ให้ clear flag
                     if queue_clone.lock().unwrap().is_empty() {
                         is_speaking_clone.store(false, Ordering::Relaxed);
+                        debug!("📭 Queue ว่างแล้ว ปิด flag is_speaking");
                     }
                 } else {
                     is_speaking_clone.store(false, Ordering::Relaxed);
@@ -80,19 +92,37 @@ impl TTSQueue {
     }
 
     pub fn enqueue(&self, text: &str) {
+        self.enqueue_with_start_time_and_pause(text, None, false);
+    }
+
+    pub fn enqueue_with_start_time(&self, text: &str, start_time: Option<Instant>) {
+        self.enqueue_with_start_time_and_pause(text, start_time, false);
+    }
+
+    pub fn enqueue_with_start_time_and_pause(&self, text: &str, start_time: Option<Instant>, with_pause_after: bool) {
         let text = text.to_string();
         let queue = Arc::clone(&self.queue);
         let preload_semaphore = Arc::clone(&self.preload_semaphore);
         let tts = Arc::clone(&self.tts);
 
-        info!("📥 เพิ่มเข้า TTS Queue: {}", text);
+        info!("📥 เพิ่มเข้า TTS Queue (รอ preload): {} (pause = {})", text, with_pause_after);
 
         task::spawn(async move {
             debug!("🌀 Preloading เสียงสำหรับ: {}", text);
-            let mp3_data = tts.synthesize(&text).await.ok();
-            let job = TTSJob { text, mp3_data };
+            let mp3_data = match tts.synthesize(&text).await {
+                Ok(data) => {
+                    debug!("✅ สร้างเสียงสำเร็จ: {} ({} bytes)", text, data.len());
+                    Some(data)
+                }
+                Err(err) => {
+                    error!("❌ สร้างเสียงล้มเหลว: {} => {}", text, err);
+                    None
+                }
+            };
 
+            let job = TTSJob { text: text.clone(), mp3_data, start_time, with_pause_after };
             let mut q = queue.lock().unwrap();
+            debug!("📦 เพิ่มเข้า VecDeque: {} (ตอนนี้มี {} job)", text, q.len() + 1);
             q.push_back(job);
         });
     }
@@ -100,7 +130,6 @@ impl TTSQueue {
     pub async fn enqueue_and_wait(&self, text: &str) {
         self.enqueue(text);
 
-        // Wait until speaking flag is true (speaker may lag slightly)
         let mut waited = 0;
         while !self.is_speaking.load(Ordering::Relaxed) && waited < 2000 {
             sleep(Duration::from_millis(50)).await;
@@ -108,6 +137,12 @@ impl TTSQueue {
         }
 
         info!("✅ speaker เริ่มพูดแล้ว หลังรอ {}ms", waited);
+
+        while self.is_speaking.load(Ordering::Relaxed) {
+            sleep(Duration::from_millis(200)).await;
+        }
+
+        info!("🔇 เสร็จสิ้นการพูดทั้งหมด");
     }
 
     pub async fn is_speaking(&self) -> bool {
@@ -117,4 +152,11 @@ impl TTSQueue {
     pub fn block_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.is_speaking)
     }
+}
+
+fn estimate_mp3_duration(data: &[u8]) -> Duration {
+    let kbps = 64.0; // สมมุติ SmartTTS encode ที่ 64 kbps
+    let bytes_per_sec = (kbps * 1000.0 / 8.0); // -> 8000 bytes/sec
+    let secs = data.len() as f64 / bytes_per_sec;
+    Duration::from_secs_f64(secs)
 }
