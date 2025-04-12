@@ -26,7 +26,6 @@ use reasoner::template::build_insight_prompt;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() {
@@ -45,8 +44,12 @@ async fn main() {
 
     let smart_tts = Arc::new(SmartTTS::new());
     let speaker: Arc<dyn SpeakerBackend> = create_speaker_controller_from_env();
-    let tts = Arc::new(TTSQueue::new(smart_tts.clone(), speaker, 3));
-    let agent = AiAgent::new(&agent_name, tts.clone());
+
+    // ✅ สร้าง TTSQueue และได้ receiver กลับมาจาก tuple
+    let (tts_queue, done_rx) = TTSQueue::new(smart_tts.clone(), speaker, 3);
+    let tts = Arc::new(tts_queue);
+
+    let agent = AiAgent::new(&agent_name, tts.clone(), done_rx);
 
     loop {
         wait_for_wake_word(&agent, &memory_queue).await;
@@ -56,7 +59,6 @@ async fn main() {
 
 async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     agent.say("สวัสดีครับ สามารถเรียกผมได้เลยครับ").await;
-    agent.await_speaking_done().await;
 
     loop {
         info!("😴 [Sleep Mode] รอคำปลุกที่มีชื่อหุ่น...");
@@ -66,7 +68,6 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
                 info!("🗢 ถูกเรียกชื่อว่า: {}", name);
                 memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
                 agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
-                agent.await_speaking_done().await;
                 break;
             } else {
                 info!("🛌 ยังไม่มีการเรียกชื่อหุ่น: {}", transcript);
@@ -79,7 +80,6 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
 
 async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
     loop {
-        agent.await_speaking_done().await;
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
 
         if let Some(transcript) = agent.listen().await {
@@ -87,7 +87,6 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
 
             if transcript.contains("นอน") || transcript.contains("พักก่อน") {
                 agent.say("งั้นผมขอพักก่อนนะครับ").await;
-                agent.await_speaking_done().await;
                 break;
             }
 

@@ -5,8 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use log::{debug, error, info, warn};
-use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::sync::{Mutex, watch};
 
 use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
@@ -17,9 +16,8 @@ use crate::reasoner::llm_reasoner::LLMReasoner;
 use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::reasoner::template::build_streaming_prompt;
 
-type SkillFn = fn(Option<&str>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
-
 const RAW_AUDIO_PATH: &str = "src/data/caches/audio/input.wav";
+type SkillFn = fn(Option<&str>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
 pub struct AiAgent {
     pub name: String,
@@ -28,105 +26,97 @@ pub struct AiAgent {
     pub llm: Arc<SmartLLM>,
     pub reasoner: Arc<LLMReasoner>,
     pub skills: HashMap<String, SkillFn>,
-    is_speaking_flag: Arc<Mutex<bool>>,
+    can_speak_flag: Arc<Mutex<bool>>,
+    done_rx: watch::Receiver<()>,
 }
 
 impl AiAgent {
-    pub fn new(name: &str, tts: Arc<TTSQueue>) -> Self {
+    pub fn new(name: &str, tts: Arc<TTSQueue>, done_rx: watch::Receiver<()>) -> Self {
         info!("🤖 Initializing AiAgent with name: {}", name);
 
         let llm = Arc::new(SmartLLM::new());
         let reasoner = Arc::new(LLMReasoner::new(Arc::clone(&llm)));
 
-        info!("🫠 Reasoner initialized");
-        info!("🔡 TTS engine ready");
-        info!("🫯 ASR engine ready");
-
-        Self {
+        let agent = Self {
             name: name.to_string(),
             tts,
             asr: Arc::new(SmartASR::new()),
             llm,
             reasoner,
             skills: HashMap::new(),
-            is_speaking_flag: Arc::new(Mutex::new(false)),
-        }
+            can_speak_flag: Arc::new(Mutex::new(true)),
+            done_rx,
+        };
+
+        agent.start_listening_done_event();
+        agent
+    }
+
+    fn start_listening_done_event(&self) {
+        let mut rx = self.done_rx.clone();
+        let flag = Arc::clone(&self.can_speak_flag);
+
+        tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_ok() {
+                    let mut writable = flag.lock().await;
+                    *writable = true;
+                }
+            }
+        });
+    }
+
+    pub async fn mark_speaking(&self) {
+        let mut flag = self.can_speak_flag.lock().await;
+        *flag = false;
+    }
+
+    pub async fn is_speaking(&self) -> bool {
+        let state = self.can_speak_flag.lock().await;
+        !*state
     }
 
     pub async fn say(&self, msg: &str) {
-        {
-            let mut flag = self.is_speaking_flag.lock().await;
-            *flag = true;
-        }
-
+        self.mark_speaking().await;
         info!("🎡 {} กำลังพูด: {}", self.name, msg);
         self.tts.enqueue_and_wait(msg).await;
-        self.await_speaking_done().await;
-
-        {
-            let mut flag = self.is_speaking_flag.lock().await;
-            *flag = false;
-        }
-    }
-
-    pub async fn await_speaking_done(&self) {
-        while self.tts.is_speaking().await {
-            sleep(Duration::from_millis(100)).await;
-        }
+        info!("🔇 จบการพูด");
     }
 
     pub async fn think_and_say_streaming(&self, input: &str, context: &str) -> String {
+        while self.is_speaking().await {}
+
         info!("🚦 เรียกใช้ think_and_say_streaming แล้ว");
         let name = self.name.clone();
         let tts = Arc::clone(&self.tts);
         let full_reply = Arc::new(Mutex::new(String::new()));
-        let speaking_flag = Arc::clone(&self.is_speaking_flag);
-        let t0 = Instant::now();
-
-        {
-            let mut flag = speaking_flag.lock().await;
-            *flag = true;
-        }
+        self.mark_speaking().await;
 
         info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
-
-        // self.tts.enqueue_with_start_time("โอเคครับ", Some(t0));
-
         let buffer = Arc::new(Mutex::new(String::new()));
         let reply_for_closure = Arc::clone(&full_reply);
-
+        let t0 = Instant::now();
         let streaming_prompt = build_streaming_prompt(input, context);
         debug!("📋 [Prompt] {}", streaming_prompt);
 
-        debug!("🧪 [LLM] เริ่ม stream_reply");
         let result = self.llm.stream_reply(&streaming_prompt, {
             let buffer = Arc::clone(&buffer);
             let tts = Arc::clone(&tts);
-
             move |chunk| {
-                debug!("🧩 [Chunk] ได้รับ: '{}'", chunk);
-
                 let buffer = Arc::clone(&buffer);
                 let tts = Arc::clone(&tts);
                 let reply_for_closure = Arc::clone(&reply_for_closure);
                 let t0 = t0.clone();
-
                 tokio::spawn(async move {
                     reply_for_closure.lock().await.push_str(&chunk);
-
                     let mut buf = buffer.lock().await;
                     buf.push_str(&chunk);
-                    debug!("🧠 [Buffer] ปัจจุบัน: {}", buf);
-
                     let (chunks, rest) = split_smart_thai_chunks(&buf, 0);
                     *buf = rest;
-
                     for chunk in chunks {
-                        match chunk {
-                            SmartChunk::Normal(text) => {
-                                debug!("📤 [TTS] ส่งเข้า TTS (ระหว่าง stream): {}", text);
-                                tts.enqueue_with_start_time(&text, Some(t0));
-                            }
+                        if let SmartChunk::Normal(text) = chunk {
+                            debug!("📤 [TTS] ส่งเข้า TTS (ระหว่าง stream): {}", text);
+                            tts.enqueue_with_start_time(&text, Some(t0));
                         }
                     }
                 });
@@ -146,24 +136,11 @@ impl AiAgent {
             self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
         }
 
-        self.await_speaking_done().await;
+        self.tts.wait_until_done().await;
 
-        {
-            let mut flag = speaking_flag.lock().await;
-            *flag = false;
-        }
-
-        let reply = {
-            let lock = full_reply.lock().await;
-            lock.clone()
-        };
-
+        let reply = full_reply.lock().await.clone();
         info!("🧾 GPT full reply: {}", reply);
         reply
-    }
-
-    pub async fn is_speaking(&self) -> bool {
-        *self.is_speaking_flag.lock().await
     }
 
     pub async fn do_skill(&self, name: &str, args: Option<&str>) {
@@ -193,16 +170,11 @@ impl AiAgent {
     }
 
     pub async fn listen(&self) -> Option<String> {
-        self.await_speaking_done().await;
+        while self.is_speaking().await {}
 
         self.tts.play_beep_start().await;
         info!("🎤 [{}] เริ่มบันทึกเสียงผู้ใช้...", self.name);
-
-        let result = self
-            .asr
-            .listen(RAW_AUDIO_PATH, Some(10_000), Some(1000))
-            .await;
-
+        let result = self.asr.listen(RAW_AUDIO_PATH, Some(10_000), Some(1000)).await;
         self.tts.play_beep_end().await;
 
         match &result {
@@ -213,9 +185,7 @@ impl AiAgent {
                     return None;
                 }
             }
-            None => {
-                warn!("📬 [{}] ไม่พบข้อความเสียง", self.name);
-            }
+            None => warn!("📬 [{}] ไม่พบข้อความเสียง", self.name),
         }
 
         result

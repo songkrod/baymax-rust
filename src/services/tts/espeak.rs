@@ -2,10 +2,10 @@
 
 use async_trait::async_trait;
 use std::process::{Command, Stdio};
-use std::io::{Read, Write};
+use std::io::{Read};
 use std::fs::File;
 use tempfile::NamedTempFile;
-use log::{info, error};
+use log::{info};
 use super::interface::TTSService;
 
 pub struct ESpeakTTS;

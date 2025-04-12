@@ -1,6 +1,5 @@
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use log::{info, warn, error, debug};
-use tokio::task;
 use async_trait::async_trait;
 
 use super::interface::TTSService;
@@ -89,27 +88,10 @@ impl SmartTTS {
         }
     }
 
-    pub async fn speak_streamed(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let chunks = Self::split_into_chunks(text);
-        debug!("📦 [SmartTTS] split stream chunks = {:?}", chunks);
-
-        for chunk in chunks {
-            let primary = Arc::clone(&self.primary);
-            let fallback = Arc::clone(&self.fallback);
-            let chunk_clone = chunk.clone();
-
-            task::spawn(async move {
-                if let Err(e) = primary.speak(&chunk_clone).await {
-                    warn!("⚠️ Streamed chunk failed: {}, fallback...", e);
-                    if let Err(fallback_err) = fallback.speak(&chunk_clone).await {
-                        error!("❌ fallback ก็ล้มเหลว: {} => {}", chunk_clone, fallback_err);
-                    }
-                }
-            });
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-        }
-
+    // Deprecated and unused in current architecture using TTSQueue
+    #[allow(dead_code)]
+    pub async fn speak_streamed(&self, _text: &str) -> Result<(), Box<dyn std::error::Error>> {
+        warn!("⚠️ speak_streamed() is deprecated. Use enqueue_with_start_time() via TTSQueue instead.");
         Ok(())
     }
 

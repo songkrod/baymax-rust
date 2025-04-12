@@ -48,7 +48,7 @@ impl SmartLLM {
         }
     }
 
-    pub async fn stream_reply<F>(&self, input: &str, mut on_chunk: F) -> Result<(), Box<dyn std::error::Error>>
+    pub async fn stream_reply<F>(&self, input: &str, on_chunk: F) -> Result<(), Box<dyn std::error::Error>>
     where
         F: FnMut(String) + Send + 'static,
     {

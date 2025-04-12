@@ -66,7 +66,7 @@ The user said:
     )
 }
 
-pub fn build_reasoning_prompt(agent_name: &str, user_text: &str, self_knowledge: &str, recent_context: &str) -> String {
+pub fn build_reasoning_prompt(_agent_name: &str, user_text: &str, self_knowledge: &str, recent_context: &str) -> String {
     let language = detect_language(user_text);
     let instruction = match language {
         UserLanguage::Thai => "ตอบกลับเป็นภาษาไทยด้วยน้ำเสียงเป็นกันเองและอบอุ่น",
@@ -135,10 +135,14 @@ Response must be a valid JSON object only, without any markdown, code block, or 
 For example:
 {{"intent": "ask_weather", "emotion": "curious", "confidence": 0.85}}
 
+Self-Knowledge:
+{self_knowledge}
+
 The user said:
 "{user_input}"
 "#,
         persona = baymax_persona(),
+        self_knowledge = self_knowledge,
         user_input = user_input.trim()
     )
 }

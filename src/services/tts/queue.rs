@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
 use std::time::{Instant, Duration};
 use tokio::task;
-use tokio::time::sleep;
-use log::{info, debug, error};
+use tokio::sync::{Notify, watch};
+use log::{info, debug, error, warn};
 
 use crate::services::tts::interface::TTSService;
 use crate::hardware::speaker::interface::SpeakerBackend;
@@ -25,6 +25,10 @@ pub struct TTSQueue {
     tts: Arc<dyn TTSService>,
     preload_semaphore: Arc<tokio::sync::Semaphore>,
     is_speaking: Arc<AtomicBool>,
+    start_notify: Arc<Notify>,
+    wake_notify: Arc<Notify>,
+    done_notify: Arc<Notify>,
+    done_signal_tx: watch::Sender<()>,
 }
 
 impl TTSQueue {
@@ -32,59 +36,79 @@ impl TTSQueue {
         tts: Arc<dyn TTSService>,
         speaker: Arc<dyn SpeakerBackend>,
         max_concurrent_preload: usize,
-    ) -> Self {
+    ) -> (Self, watch::Receiver<()>) {
         let queue = Arc::new(Mutex::new(VecDeque::<TTSJob>::new()));
         let preload_semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent_preload));
         let is_speaking = Arc::new(AtomicBool::new(false));
+        let start_notify = Arc::new(Notify::new());
+        let wake_notify = Arc::new(Notify::new());
+        let done_notify = Arc::new(Notify::new());
+        let (done_signal_tx, done_signal_rx) = watch::channel(());
 
         let queue_clone = Arc::clone(&queue);
         let speaker_clone = Arc::clone(&speaker);
         let is_speaking_clone = Arc::clone(&is_speaking);
+        let start_notify_clone = Arc::clone(&start_notify);
+        let wake_notify_clone = Arc::clone(&wake_notify);
+        let done_notify_clone = Arc::clone(&done_notify);
+        let done_signal_tx_clone = done_signal_tx.clone();
 
         task::spawn(async move {
             loop {
-                let job = {
-                    let mut q = queue_clone.lock().unwrap();
-                    q.pop_front()
+                let job = loop {
+                    let maybe_job = {
+                        let mut q = queue_clone.lock().unwrap();
+                        q.pop_front()
+                    };
+                    if let Some(job) = maybe_job {
+                        break job;
+                    } else {
+                        wake_notify_clone.notified().await;
+                    }
                 };
 
-                if let Some(job) = job {
-                    debug!("🧾 ประมวลผล job[{}]: '{}' (mp3 = {})", job.index, job.text, job.mp3_data.is_some());
+                debug!("🧾 ประมวลผล job[{}]: '{}' (mp3 = {})", job.index, job.text, job.mp3_data.is_some());
 
-                    if let Some(mp3) = job.mp3_data.clone() {
-                        is_speaking_clone.store(true, Ordering::Relaxed);
+                if let Some(mp3) = job.mp3_data.clone() {
+                    is_speaking_clone.store(true, Ordering::Relaxed);
+                    start_notify_clone.notify_waiters();
 
-                        if let Some(t0) = job.start_time {
-                            let elapsed = t0.elapsed().as_secs_f32();
-                            info!("📈 [Perf] เริ่มพูดหลัง GPT ใช้เวลา: {:.2}s", elapsed);
-                        }
-
-                        info!("🔊 [TTSQueue] พูด: {}", job.text);
-                        if let Err(e) = speaker_clone.play(&mp3).await {
-                            error!("❌ เล่นเสียงล้มเหลว: {}", e);
-                        }
-                    } else {
-                        error!("⚠️ ไม่มี mp3_data สำหรับ '{}'", job.text);
+                    if let Some(t0) = job.start_time {
+                        let elapsed = t0.elapsed().as_secs_f32();
+                        info!("📈 [Perf] เริ่มพูดหลัง GPT ใช้เวลา: {:.2}s", elapsed);
                     }
 
-                    if queue_clone.lock().unwrap().is_empty() {
-                        is_speaking_clone.store(false, Ordering::Relaxed);
-                        debug!("📭 Queue ว่างแล้ว");
+                    info!("🔊 [TTSQueue] พูด: {}", job.text);
+                    let result = speaker_clone.play(&mp3).await;
+                    if let Err(e) = result {
+                        error!("❌ เล่นเสียงล้มเหลว: {}", e);
                     }
-                } else {
+
                     is_speaking_clone.store(false, Ordering::Relaxed);
-                    sleep(Duration::from_millis(10)).await;
+                    debug!("🔇 พูดจบ job[{}]: {}", job.index, job.text);
+
+                    let _ = done_signal_tx_clone.send(());
+                    done_notify_clone.notify_waiters();
+                } else {
+                    error!("⚠️ ไม่มี mp3_data สำหรับ '{}'", job.text);
                 }
             }
         });
 
-        Self {
-            queue,
-            speaker,
-            tts,
-            preload_semaphore,
-            is_speaking,
-        }
+        (
+            Self {
+                queue,
+                speaker,
+                tts,
+                preload_semaphore,
+                is_speaking,
+                start_notify,
+                wake_notify,
+                done_notify,
+                done_signal_tx,
+            },
+            done_signal_rx,
+        )
     }
 
     pub fn enqueue(&self, text: &str) {
@@ -96,10 +120,10 @@ impl TTSQueue {
         let text = text.to_string();
         let queue = Arc::clone(&self.queue);
         let tts = Arc::clone(&self.tts);
+        let wake_notify = Arc::clone(&self.wake_notify);
 
         info!("📥 เพิ่มเข้า TTS Queue: {}", text);
 
-        // ✅ quick fix: await synthesize ก่อน push
         task::spawn(async move {
             debug!("🌀 สร้างเสียง: {}", text);
             let mp3_data = match tts.synthesize(&text).await {
@@ -124,25 +148,30 @@ impl TTSQueue {
             let mut q = queue.lock().unwrap();
             debug!("📦 เข้า queue ({} jobs): {}", q.len() + 1, text);
             q.push_back(job);
+            wake_notify.notify_one();
         });
     }
 
     pub async fn enqueue_and_wait(&self, text: &str) {
         self.enqueue(text);
 
-        let mut waited = 0;
-        while !self.is_speaking.load(Ordering::Relaxed) && waited < 2000 {
-            sleep(Duration::from_millis(50)).await;
-            waited += 50;
+        let timeout = Duration::from_millis(2000);
+        let start = tokio::time::timeout(timeout, self.start_notify.notified()).await;
+
+        match start {
+            Ok(_) => info!("✅ speaker เริ่มพูดตามสัญญาณ notify แล้ว"),
+            Err(_) => warn!("⌛ timeout: รอ speaker เริ่มพูดเกิน 2s แล้ว"),
         }
 
-        info!("✅ speaker เริ่มพูดหลังรอ {}ms", waited);
-
-        while self.is_speaking.load(Ordering::Relaxed) {
-            sleep(Duration::from_millis(200)).await;
-        }
+        self.wait_until_done().await;
 
         info!("🔇 จบการพูด");
+    }
+
+    pub async fn wait_until_done(&self) {
+        while self.is_speaking().await {
+            self.done_notify.notified().await;
+        }
     }
 
     pub async fn is_speaking(&self) -> bool {
@@ -159,6 +188,10 @@ impl TTSQueue {
 
     pub async fn play_beep_end(&self) {
         self.speaker.play_beep_end().await;
+    }
+
+    pub fn subscribe_done_event(&self) -> watch::Receiver<()> {
+        self.done_signal_tx.subscribe()
     }
 }
 
