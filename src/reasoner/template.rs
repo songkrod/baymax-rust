@@ -44,33 +44,21 @@ Respond in the same language as the user.
         self_knowledge = self_knowledge
     );
 
-    match detect_language(user_input) {
-        UserLanguage::Thai | UserLanguage::Other => format!(
-            r#"{shared}
-You must reply in **Thai language** with the following formatting rules:
+    format!(
+        r#"{shared}
+To help a speech robot speak more responsively, format your reply like this:
 
-- ✅ Combine words into short, natural-sounding phrases (4–7 words).
-- ✅ Separate each **phrase group** with the special symbol "⧙" (U+29D9).
-- ✅ Separate **sentences** with the symbol "※".
-- ✅ Do **not** use space between Thai words.
-- ✅ Include punctuation like ".", "?", "!"
-- ❌ Do not use Markdown, styling, or special characters (except "※" and "⧙").
-
-This formatting helps a speech robot speak more naturally and responsively.
+- ✅ Split your reply into full sentences.
+- ✅ Separate each sentence with the special symbol "⧙" (U+29D9).
+- ✅ Include punctuation as usual, e.g., ".", "?", "!"
+- ✅ Do **not** use Markdown or styling.
+- ✅ Do **not** wrap the result in quotes or backticks.
 
 The user said:
 "{user_input}""#,
-            shared = shared,
-            user_input = user_input.trim()
-        ),
-        UserLanguage::English => format!(
-            r#"{shared}
-The user said:
-"{user_input}""#,
-            shared = shared,
-            user_input = user_input.trim()
-        ),
-    }
+        shared = shared,
+        user_input = user_input.trim()
+    )
 }
 
 pub fn build_reasoning_prompt(agent_name: &str, user_text: &str, self_knowledge: &str, recent_context: &str) -> String {

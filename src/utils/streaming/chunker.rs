@@ -40,16 +40,12 @@ pub fn split_to_word_chunks(text: &str, word_limit: usize) -> (Vec<String>, Stri
     (chunks, leftover)
 }
 
-/// ชนิดของ chunk ที่อาจจะมี pause หรือไม่
+/// ใช้กับภาษาไทย: แบ่งประโยคตามเครื่องหมาย "⧙" ที่ GPT แทรกมา
 #[derive(Debug)]
 pub enum SmartChunk {
-    Normal(String),      // ⧙ → ไม่หยุดพูด
-    WithPause(String),   // ※ → หยุดพูด
+    Normal(String),
 }
 
-/// ใช้กับภาษาไทย: แบ่งวรรคแบบฉลาดตามเครื่องหมายพิเศษที่ GPT แทรกเข้ามา
-/// ⧙ = split เฉย ๆ, พูดต่อเนื่องกันได้เลย
-/// ※ = pause ก่อนพูดประโยคถัดไป
 pub fn split_smart_thai_chunks(text: &str, _min_len: usize) -> (Vec<SmartChunk>, String) {
     use log::debug;
     let mut chunks = vec![];
@@ -58,14 +54,6 @@ pub fn split_smart_thai_chunks(text: &str, _min_len: usize) -> (Vec<SmartChunk>,
 
     for c in text.chars() {
         match c {
-            '※' => {
-                if !current.trim().is_empty() {
-                    let chunk = current.trim().to_string();
-                    debug!("🧠 ตัด chunk (※): '{}'", chunk);
-                    chunks.push(SmartChunk::WithPause(chunk));
-                    current.clear();
-                }
-            },
             '⧙' => {
                 if !current.trim().is_empty() {
                     let chunk = current.trim().to_string();

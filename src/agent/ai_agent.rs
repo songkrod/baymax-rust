@@ -1,5 +1,3 @@
-// 📁 src/agent/ai_agent.rs
-
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -19,13 +17,10 @@ use crate::reasoner::llm_reasoner::LLMReasoner;
 use crate::reasoner::reasoning_result::ReasoningResult;
 use crate::reasoner::template::build_streaming_prompt;
 
-/// Async Skill ฟังก์ชันที่สามารถเรียกได้ภายหลัง เช่น "say", "rest"
 type SkillFn = fn(Option<&str>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// พาธไฟล์เสียงที่ใช้ในการบันทึกและแปลง
 const RAW_AUDIO_PATH: &str = "src/data/caches/audio/input.wav";
 
-/// ตัวแทนของ Agent ที่สามารถพูด, ฟัง, คิด, และเรียนรู้ skill ได้
 pub struct AiAgent {
     pub name: String,
     pub tts: Arc<TTSQueue>,
@@ -83,7 +78,6 @@ impl AiAgent {
         let tts = Arc::clone(&self.tts);
         let full_reply = Arc::new(Mutex::new(String::new()));
         let speaking_flag = Arc::clone(&self.is_speaking_flag);
-
         let t0 = Instant::now();
 
         {
@@ -93,19 +87,21 @@ impl AiAgent {
 
         info!("💬 [{}] เริ่มตอบแบบ streaming: {}", name, input);
 
+        self.tts.enqueue_with_start_time("ขอผมตรวจสอบสักครู่นะครับ", Some(t0));
+
         let buffer = Arc::new(Mutex::new(String::new()));
         let reply_for_closure = Arc::clone(&full_reply);
 
         let streaming_prompt = build_streaming_prompt(input);
-        debug!("📋 prompt: {}", streaming_prompt);
+        debug!("📋 [Prompt] {}", streaming_prompt);
 
-        debug!("🧪 เริ่ม stream_reply");
+        debug!("🧪 [LLM] เริ่ม stream_reply");
         let result = self.llm.stream_reply(&streaming_prompt, {
             let buffer = Arc::clone(&buffer);
             let tts = Arc::clone(&tts);
 
             move |chunk| {
-                debug!("🧹 received chunk: '{}'", chunk);
+                debug!("🧩 [Chunk] ได้รับ: '{}'", chunk);
 
                 let buffer = Arc::clone(&buffer);
                 let tts = Arc::clone(&tts);
@@ -117,23 +113,16 @@ impl AiAgent {
 
                     let mut buf = buffer.lock().await;
                     buf.push_str(&chunk);
-                    debug!("🧠 current buffer: {}", buf);
+                    debug!("🧠 [Buffer] ปัจจุบัน: {}", buf);
 
-                    let (chunks, rest) = split_smart_thai_chunks(&buf, 6);
+                    let (chunks, rest) = split_smart_thai_chunks(&buf, 0);
                     *buf = rest;
-
-                    let chunk_strs: Vec<_> = chunks.iter().map(|c| format!("{:?}", c)).collect();
-                    debug!("🔎 Chunk list: [{}]", chunk_strs.join(", "));
 
                     for chunk in chunks {
                         match chunk {
                             SmartChunk::Normal(text) => {
-                                debug!("📤 ส่งเข้า TTS (ปกติ): {}", text);
+                                debug!("📤 [TTS] ส่งเข้า TTS (ระหว่าง stream): {}", text);
                                 tts.enqueue_with_start_time(&text, Some(t0));
-                            }
-                            SmartChunk::WithPause(text) => {
-                                debug!("📤 ส่งเข้า TTS (พักก่อน): {}", text);
-                                tts.enqueue_with_start_time_and_pause(&text, Some(t0), true);
                             }
                         }
                     }
@@ -141,7 +130,15 @@ impl AiAgent {
             }
         }).await;
 
-        if result.is_err() {
+        if result.is_ok() {
+            let mut buf = buffer.lock().await;
+            let leftover = buf.trim();
+            if !leftover.is_empty() {
+                debug!("🔚 [Flush] ส่ง chunk ปิดท้ายเข้า TTS: {}", leftover);
+                tts.enqueue_with_start_time(leftover, Some(t0));
+                buf.clear();
+            }
+        } else {
             error!("🛑 stream_reply ล้มเหลว: {:?}", result);
             self.tts.enqueue("ขออภัยครับ ผมตอบไม่ได้ในตอนนี้");
         }
@@ -161,7 +158,6 @@ impl AiAgent {
         };
 
         info!("🧾 GPT full reply: {}", reply);
-
         reply
     }
 
