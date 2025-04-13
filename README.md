@@ -105,4 +105,50 @@ baymax-rust/
 
 ## ❤️ ทีมงาน
 
-Powered by Rust, GPT, faster-whisper, and a lot of coffee.
+## Powered by Rust, GPT, faster-whisper, and a lot of coffee.
+
+## 🧠 Project Structure (Baymax V3)
+
+โครงสร้างระบบ Baymax V3 ออกแบบตามแนวคิด modular และ pluggable
+
+```
+src/
+├── agent/                 # จุดควบคุมหลักของ AI agent
+├── reasoner/              # วิเคราะห์ intent / emotion / response
+├── skills/                # สิ่งที่ Baymax ทำได้ เช่น พูด ฟัง ค้นหา
+├── services/              # Pluggable adapters เช่น GPT, Whisper, TTS
+├── hardware/              # ควบคุมอุปกรณ์จริง เช่น ลำโพง GPIO
+├── memory/                # จัดการความจำระยะสั้น-ยาว
+├── perception/            # ตรวจจับสิ่งเร้า เช่น เรียกชื่อ
+├── utils/                 # ฟังก์ชันทั่วไป เช่น config, logger, vad
+├── data/                  # ข้อมูล runtime เช่น log, memory, audio
+└── main.rs                # จุดเริ่มต้นโปรแกรม
+```
+
+---
+
+## 🧪 Project Instructions for ChatGPT
+
+Baymax Rust Edition ใช้ ChatGPT เป็น reasoning layer แบบ plug-in
+
+### หลักการ:
+
+- **LLM จะไม่ตัดสินใจใช้ hardware หรือเรียก API เอง** แต่ส่ง intent + reply
+- GPT ใช้ 2 prompt แยกกัน: insight และ response
+- ใช้ symbol `⧙` แทนการแบ่งประโยคใน streaming mode
+- Baymax จะพูด "static phrase" ระหว่างรอ GPT เพื่อไม่ให้เงียบเกิน
+
+### แนวทาง prompt:
+
+- `insight_prompt`: วิเคราะห์ emotion, intent, follow_up โดยไม่ stream
+- `streaming_prompt`: ใช้สำหรับพูดตอบแบบ real-time, stream ทีละประโยค
+
+### ตัวอย่าง Prompt Instruction:
+
+```text
+คุณคือ AI ผู้ช่วยชื่อเบย์แมกซ์ พูดจาอบอุ่น สุภาพ และติดตลกนิดๆ
+ห้ามตอบเกินความรู้ที่มี และถ้าตอบไม่ได้ ให้บอกว่า "ขอผมค้นหาข้อมูลสักครู่นะครับ"
+แสดงผลลัพธ์สำหรับพูดได้เลย โดยแบ่งประโยคด้วย ⧙
+```
+
+---
