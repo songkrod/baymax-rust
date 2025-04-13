@@ -1,5 +1,5 @@
 // ✅ src/memory/memory_manager.rs
-use crate::services::search::manager::VectorSearch;
+use crate::services::vector_db::manager::VectorSearch;
 use crate::utils::embeddings::embed_text;
 use crate::utils::hash::generate_item_id;
 use std::collections::HashMap;

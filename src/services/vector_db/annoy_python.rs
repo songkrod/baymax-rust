@@ -1,4 +1,4 @@
-use crate::services::search::interface::SearchService;
+use crate::services::vector_db::interface::SearchService;
 use crate::utils::file::ensure_file_exists;
 use async_trait::async_trait;
 use log::{info, error};

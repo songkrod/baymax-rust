@@ -1,6 +1,6 @@
-use crate::services::search::annoy_python::AnnoyPython;
-use crate::services::search::in_memory::InMemorySearch;
-use crate::services::search::interface::SearchService;
+use crate::services::vector_db::annoy_python::AnnoyPython;
+use crate::services::vector_db::in_memory::InMemorySearch;
+use crate::services::vector_db::interface::SearchService;
 use log::{info, warn};
 use std::error::Error;
 use std::sync::Arc;

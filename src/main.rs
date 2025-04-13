@@ -17,7 +17,7 @@ use perception::name::name_reasoner::is_called_by_name;
 use memory::memory_manager::MemoryManager;
 use memory::memory_queue::MemoryQueue;
 use memory::conversation_context::ConversationContext;
-use services::search::manager::VectorSearch;
+use services::vector_db::manager::VectorSearch;
 use services::tts::manager::SmartTTS;
 use services::tts::queue::TTSQueue;
 use hardware::speaker::controller::create_speaker_controller_from_env;

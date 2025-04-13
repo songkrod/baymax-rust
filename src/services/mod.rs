@@ -1,4 +1,4 @@
 pub mod tts;
 pub mod asr;
 pub mod llm;
-pub mod search;
+pub mod vector_db;
