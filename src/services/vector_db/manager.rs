@@ -15,7 +15,7 @@ pub struct VectorSearch {
 
 impl VectorSearch {
     pub fn new() -> Self {
-        let backend = std::env::var("search_backend").unwrap_or_else(|_| "annoy_python".to_string());
+        let backend = std::env::var("vector_db_backend").unwrap_or_else(|_| "annoy_python".to_string());
 
         let primary: Arc<dyn SearchService + Send + Sync> = match backend.as_str() {
             "annoy_python" => {

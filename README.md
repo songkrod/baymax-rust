@@ -10,6 +10,16 @@ Baymax เป็น AI ผู้ช่วยที่พูดได้ ฟั�
 
 ### ✅ 1. อัปเดตเครื่องและติดตั้ง dependency ทั้งหมด
 
+### 🧰 1.1 เพิ่มเติมสำหรับคนที่ใช้ backend แบบ scraping (GoogleScraperService)
+
+```bash
+sudo apt install -y libcurl4-openssl-dev pkg-config
+cargo add reqwest scraper --features="json"
+```
+
+> ใช้สำหรับการดึงผลลัพธ์จาก Google Search แบบไม่ผ่าน API
+> แนะนำให้ใช้บนเครื่อง PC หรือ Server ที่ไม่กลัวโดน Google block
+
 ```bash
 sudo apt update
 sudo apt install -y \
@@ -152,3 +162,43 @@ Baymax Rust Edition ใช้ ChatGPT เป็น reasoning layer แบบ plu
 ```
 
 ---
+
+---
+
+## 🧠 จะเลือกใช้ Google Search แบบไหนดี?
+
+### ✅ ใช้ `google_api` เมื่อ:
+
+- ต้องการความเสถียร (API ทางการจาก Google)
+- มี quota เพียงพอ (100 คำค้นฟรี/วัน)
+- ไม่ต้องการจัดการระบบ scraping เอง
+
+### ✅ ใช้ `google_scrape_py` (Python) เมื่อ:
+
+- ไม่อยากใช้ API key หรือกลัว quota หมด
+- Dev บนเครื่องเดียว (PC/Notebook)
+- อยาก dev เร็ว ๆ โดยไม่ต้อง build Rust backend
+
+```env
+search_backend=google_scrape_py
+```
+
+> Rust จะเรียก `scripts/google_scrape.py` โดยตรงผ่าน subprocess
+
+---
+
+## 🐍 Python dependencies สำหรับ Scraping (เฉพาะสาย Python)
+
+ติดตั้งด้วยคำสั่งนี้:
+
+```bash
+pip install requests beautifulsoup4
+```
+
+หรือใช้ requirements:
+
+```bash
+pip install -r scripts/requirements.txt
+```
+
+> รองรับ script ทั้ง 3 ตัว: `google_scrape.py`, `transcribe.py`, `vector_db.py`
