@@ -17,9 +17,10 @@ use perception::name::name_reasoner::is_called_by_name;
 use memory::memory_manager::MemoryManager;
 use memory::memory_queue::MemoryQueue;
 use memory::conversation_context::ConversationContext;
-use services::search::manager::VectorSearch;
+use services::vector_db::manager::VectorSearch;
 use services::tts::manager::SmartTTS;
 use services::tts::queue::TTSQueue;
+use services::search::manager::SmartSearch;
 use hardware::speaker::controller::create_speaker_controller_from_env;
 use hardware::speaker::interface::SpeakerBackend;
 use reasoner::template::build_insight_prompt;
@@ -45,15 +46,16 @@ async fn main() {
     let smart_tts = Arc::new(SmartTTS::new());
     let speaker: Arc<dyn SpeakerBackend> = create_speaker_controller_from_env();
 
-    // ✅ สร้าง TTSQueue และได้ receiver กลับมาจาก tuple
     let (tts_queue, done_rx) = TTSQueue::new(smart_tts.clone(), speaker, 3);
     let tts = Arc::new(tts_queue);
 
-    let agent = AiAgent::new(&agent_name, tts.clone(), done_rx);
+    let search = Arc::new(SmartSearch::new());
+
+    let agent = AiAgent::new(&agent_name, tts.clone(), done_rx, search);
 
     loop {
         wait_for_wake_word(&agent, &memory_queue).await;
-        wait_for_command(&agent, &memory_queue, &context).await;
+        wait_for_command(&agent, &memory_queue, &context, &memory_manager).await;
     }
 }
 
@@ -66,7 +68,10 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
         if let Some(transcript) = agent.listen().await {
             if let Some(name) = is_called_by_name(&transcript) {
                 info!("🗢 ถูกเรียกชื่อว่า: {}", name);
-                memory_queue.enqueue("wake_phrase", &transcript.clone()).await;
+                let memory_queue_clone = memory_queue.clone();
+                tokio::spawn(async move {
+                    memory_queue_clone.enqueue("wake_phrase", &transcript.clone()).await;
+                });
                 agent.say("สวัสดีครับ ผมตื่นแล้วครับ").await;
                 break;
             } else {
@@ -78,7 +83,12 @@ async fn wait_for_wake_word(agent: &AiAgent, memory_queue: &MemoryQueue) {
     }
 }
 
-async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: &ConversationContext) {
+async fn wait_for_command(
+    agent: &AiAgent,
+    memory_queue: &MemoryQueue,
+    context: &ConversationContext,
+    memory_manager: &Arc<Mutex<MemoryManager>>,
+) {
     loop {
         info!("🟢 [Active Mode] รอฟังคำสั่งจากผู้ใช้...");
 
@@ -94,19 +104,36 @@ async fn wait_for_command(agent: &AiAgent, memory_queue: &MemoryQueue, context: 
             let insight = agent.reasoner.analyze_insight(&insight_prompt).await;
             info!("🧠 insight: {:?}", insight);
 
+            let vector_matches = memory_manager.lock().await.search_memory(&transcript).await;
+            let vector_context = vector_matches.join("\n");
             let recent_context = context.get_context_prompt();
-            let final_reply = agent.think_and_say_streaming(&transcript, &recent_context).await;
+            let full_context = format!("{}\n{}", vector_context, recent_context);
+
+            let final_reply = agent.think_and_say_streaming(&transcript, &full_context).await;
             info!("💬 ตอบคำถาม: {}", final_reply);
             context.append(&transcript, &final_reply);
             context.trim_oldest(20);
             context.save_to_file();
 
             if let Some(insight) = insight {
-                let intent = insight.intent;
+                let intent = insight.intent.clone();
+                let can_answer = insight.can_answer;
                 let memory_queue_clone = memory_queue.clone();
                 tokio::spawn(async move {
                     memory_queue_clone.enqueue("last_intent", &intent).await;
                 });
+
+                if !can_answer {
+                    // ✅ ถาม user ก่อนว่าให้ค้นไหม
+                    agent.say("จะให้ผมหาข้อมูลเพิ่มเติมให้อีกไหมครับ?").await;
+                    if let Some(confirm) = agent.listen().await {
+                        if confirm.contains("ได้") || confirm.contains("หาให้") {
+                            agent.web_search_fallback(&transcript).await;
+                        } else {
+                            agent.say("เข้าใจแล้วครับ").await;
+                        }
+                    }
+                }
             }
         } else {
             warn!("👭 ไม่ได้ยินอะไรเลย");

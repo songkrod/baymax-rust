@@ -10,6 +10,16 @@ Baymax เป็น AI ผู้ช่วยที่พูดได้ ฟั�
 
 ### ✅ 1. อัปเดตเครื่องและติดตั้ง dependency ทั้งหมด
 
+### 🧰 1.1 เพิ่มเติมสำหรับคนที่ใช้ backend แบบ scraping (GoogleScraperService)
+
+```bash
+sudo apt install -y libcurl4-openssl-dev pkg-config
+cargo add reqwest scraper --features="json"
+```
+
+> ใช้สำหรับการดึงผลลัพธ์จาก Google Search แบบไม่ผ่าน API
+> แนะนำให้ใช้บนเครื่อง PC หรือ Server ที่ไม่กลัวโดน Google block
+
 ```bash
 sudo apt update
 sudo apt install -y \
@@ -105,4 +115,90 @@ baymax-rust/
 
 ## ❤️ ทีมงาน
 
-Powered by Rust, GPT, faster-whisper, and a lot of coffee.
+## Powered by Rust, GPT, faster-whisper, and a lot of coffee.
+
+## 🧠 Project Structure (Baymax V3)
+
+โครงสร้างระบบ Baymax V3 ออกแบบตามแนวคิด modular และ pluggable
+
+```
+src/
+├── agent/                 # จุดควบคุมหลักของ AI agent
+├── reasoner/              # วิเคราะห์ intent / emotion / response
+├── skills/                # สิ่งที่ Baymax ทำได้ เช่น พูด ฟัง ค้นหา
+├── services/              # Pluggable adapters เช่น GPT, Whisper, TTS
+├── hardware/              # ควบคุมอุปกรณ์จริง เช่น ลำโพง GPIO
+├── memory/                # จัดการความจำระยะสั้น-ยาว
+├── perception/            # ตรวจจับสิ่งเร้า เช่น เรียกชื่อ
+├── utils/                 # ฟังก์ชันทั่วไป เช่น config, logger, vad
+├── data/                  # ข้อมูล runtime เช่น log, memory, audio
+└── main.rs                # จุดเริ่มต้นโปรแกรม
+```
+
+---
+
+## 🧪 Project Instructions for ChatGPT
+
+Baymax Rust Edition ใช้ ChatGPT เป็น reasoning layer แบบ plug-in
+
+### หลักการ:
+
+- **LLM จะไม่ตัดสินใจใช้ hardware หรือเรียก API เอง** แต่ส่ง intent + reply
+- GPT ใช้ 2 prompt แยกกัน: insight และ response
+- ใช้ symbol `⧙` แทนการแบ่งประโยคใน streaming mode
+- Baymax จะพูด "static phrase" ระหว่างรอ GPT เพื่อไม่ให้เงียบเกิน
+
+### แนวทาง prompt:
+
+- `insight_prompt`: วิเคราะห์ emotion, intent, follow_up โดยไม่ stream
+- `streaming_prompt`: ใช้สำหรับพูดตอบแบบ real-time, stream ทีละประโยค
+
+### ตัวอย่าง Prompt Instruction:
+
+```text
+คุณคือ AI ผู้ช่วยชื่อเบย์แมกซ์ พูดจาอบอุ่น สุภาพ และติดตลกนิดๆ
+ห้ามตอบเกินความรู้ที่มี และถ้าตอบไม่ได้ ให้บอกว่า "ขอผมค้นหาข้อมูลสักครู่นะครับ"
+แสดงผลลัพธ์สำหรับพูดได้เลย โดยแบ่งประโยคด้วย ⧙
+```
+
+---
+
+---
+
+## 🧠 จะเลือกใช้ Google Search แบบไหนดี?
+
+### ✅ ใช้ `google_api` เมื่อ:
+
+- ต้องการความเสถียร (API ทางการจาก Google)
+- มี quota เพียงพอ (100 คำค้นฟรี/วัน)
+- ไม่ต้องการจัดการระบบ scraping เอง
+
+### ✅ ใช้ `google_scrape_py` (Python) เมื่อ:
+
+- ไม่อยากใช้ API key หรือกลัว quota หมด
+- Dev บนเครื่องเดียว (PC/Notebook)
+- อยาก dev เร็ว ๆ โดยไม่ต้อง build Rust backend
+
+```env
+search_backend=google_scrape_py
+```
+
+> Rust จะเรียก `scripts/google_scrape.py` โดยตรงผ่าน subprocess
+
+---
+
+## 🐍 Python dependencies สำหรับ Scraping (เฉพาะสาย Python)
+
+ติดตั้งด้วยคำสั่งนี้:
+
+```bash
+pip install requests beautifulsoup4
+```
+
+หรือใช้ requirements:
+
+```bash
+pip install -r scripts/requirements.txt
+```
+
+> รองรับ script ทั้ง 3 ตัว: `google_scrape.py`, `transcribe.py`, `vector_db.py`

@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, watch};
 use crate::services::asr::manager::SmartASR;
 use crate::services::llm::manager::SmartLLM;
 use crate::services::tts::queue::TTSQueue;
+use crate::services::search::manager::SmartSearch;
 use crate::utils::hallucination::is_hallucination;
 use crate::utils::streaming::chunker::{split_smart_thai_chunks, SmartChunk};
 use crate::reasoner::llm_reasoner::LLMReasoner;
@@ -25,13 +26,14 @@ pub struct AiAgent {
     pub asr: Arc<SmartASR>,
     pub llm: Arc<SmartLLM>,
     pub reasoner: Arc<LLMReasoner>,
+    pub search: Arc<SmartSearch>,
     pub skills: HashMap<String, SkillFn>,
     can_speak_flag: Arc<Mutex<bool>>,
     done_rx: watch::Receiver<()>,
 }
 
 impl AiAgent {
-    pub fn new(name: &str, tts: Arc<TTSQueue>, done_rx: watch::Receiver<()>) -> Self {
+    pub fn new(name: &str, tts: Arc<TTSQueue>, done_rx: watch::Receiver<()>, search: Arc<SmartSearch>) -> Self {
         info!("🤖 Initializing AiAgent with name: {}", name);
 
         let llm = Arc::new(SmartLLM::new());
@@ -43,6 +45,7 @@ impl AiAgent {
             asr: Arc::new(SmartASR::new()),
             llm,
             reasoner,
+            search,
             skills: HashMap::new(),
             can_speak_flag: Arc::new(Mutex::new(true)),
             done_rx,
@@ -81,6 +84,30 @@ impl AiAgent {
         info!("🎡 {} กำลังพูด: {}", self.name, msg);
         self.tts.enqueue_and_wait(msg).await;
         info!("🔇 จบการพูด");
+    }
+
+    pub async fn web_search_fallback(&self, query: &str) {
+        while self.is_speaking().await {}
+
+        self.mark_speaking().await;
+        info!("🌐 [{}] เรียก web_search_fallback ด้วย query: {}", self.name, query);
+
+        let preload_msg = "ขอผมค้นหาข้อมูลสักครู่นะครับ";
+        self.tts.enqueue_and_wait(preload_msg).await;
+
+        match self.search.search(query).await {
+            Ok(result) => {
+                let summary = format!("ผมเจอข้อมูลว่า ⧙{}⧙", result.snippet.trim());
+                self.tts.enqueue_and_wait(&summary).await;
+            }
+            Err(err) => {
+                error!("🌐 [Search] ล้มเหลว: {}", err);
+                self.tts.enqueue_and_wait("ขออภัยครับ ผมหาข้อมูลเพิ่มเติมไม่ได้เลยครับ").await;
+            }
+        }
+
+        self.tts.wait_until_done().await;
+        info!("🌐 จบการพูดผลลัพธ์จากเว็บ search");
     }
 
     pub async fn think_and_say_streaming(&self, input: &str, context: &str) -> String {

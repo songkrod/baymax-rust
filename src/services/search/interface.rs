@@ -1,17 +1,16 @@
-// src/services/search/interface.rs
+// 📁 services/search/interface.rs
 
 use async_trait::async_trait;
 use std::error::Error;
 
-/// Trait สำหรับระบบค้นหาคล้ายคลึง (Search)
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub title: String,
+    pub snippet: String,
+    pub url: Option<String>,
+}
+
 #[async_trait]
-pub trait SearchService: Send + Sync {
-    /// ฟังก์ชันสำหรับการค้นหาคล้ายคลึง โดยรับ query vector
-    async fn search(&self, query_vector: Vec<f32>) -> Result<Vec<u64>, Box<dyn Error>>;
-
-    /// ฟังก์ชันสำหรับการเพิ่มข้อมูลไปยัง index
-    async fn add_item(&self, item_id: u64, vector: Vec<f32>) -> Result<(), Box<dyn Error>>;
-
-    /// ฟังก์ชันสำหรับโหลด index
-    async fn load_index(&self) -> Result<(), Box<dyn Error>>;
+pub trait WebSearchService: Send + Sync {
+    async fn search(&self, query: &str) -> Result<SearchResult, Box<dyn Error + Send + Sync>>;
 }

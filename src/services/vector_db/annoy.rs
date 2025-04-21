@@ -1,4 +1,4 @@
-use crate::services::search::interface::SearchService;
+use crate::services::vector_db::interface::SearchService;
 use std::sync::Arc; // ใช้ Arc แทน Rc
 use annoy_rs::{AnnoyIndex, IndexType};
 use async_trait::async_trait;

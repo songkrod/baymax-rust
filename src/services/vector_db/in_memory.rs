@@ -1,4 +1,4 @@
-use crate::services::search::interface::SearchService;
+use crate::services::vector_db::interface::SearchService;
 use async_trait::async_trait;
 use log::info;
 use std::collections::HashMap;

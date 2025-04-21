@@ -1,3 +1,5 @@
+use crate::utils::self_knowledge;
+
 pub enum UserLanguage {
     Thai,
     English,
@@ -18,16 +20,9 @@ pub fn baymax_persona() -> &'static str {
     "You are Baymax Mini, a friendly male speaking AI robot. You always speak in a warm, helpful, and casual tone. Refer to yourself as 'ผม' or 'Baymax'. Avoid formal words like 'ฉัน'."
 }
 
-pub fn build_context_block(self_knowledge: &str) -> String {
-    format!(
-        "## Self-Knowledge\n{}\n",
-        self_knowledge.trim()
-    )
-}
-
 pub fn build_streaming_prompt(user_input: &str, context: &str) -> String {
     use crate::utils::self_knowledge;
-    let self_knowledge = self_knowledge::load();
+    let self_knowledge = self_knowledge::load_summary_text();
 
     let persona = baymax_persona();
     let context_block = if context.trim().is_empty() {
@@ -66,8 +61,9 @@ The user said:
     )
 }
 
-pub fn build_reasoning_prompt(_agent_name: &str, user_text: &str, self_knowledge: &str, recent_context: &str) -> String {
+pub fn build_reasoning_prompt(_agent_name: &str, user_text: &str, recent_context: &str) -> String {
     let language = detect_language(user_text);
+    let self_knowledge = self_knowledge::load_summary_text();
     let instruction = match language {
         UserLanguage::Thai => "ตอบกลับเป็นภาษาไทยด้วยน้ำเสียงเป็นกันเองและอบอุ่น",
         UserLanguage::English => "Respond in English with a friendly and casual tone",
@@ -119,8 +115,7 @@ Please respond ONLY with raw JSON. Do not include any Markdown or extra explanat
 }
 
 pub fn build_insight_prompt(user_input: &str) -> String {
-    use crate::utils::self_knowledge;
-    let self_knowledge = self_knowledge::load();
+    let self_knowledge = self_knowledge::load_json_minified();
 
     format!(
         r#"
